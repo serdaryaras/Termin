@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f6f9;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-border: #e2e8f0;
+  --accent: #0d4f8b;
+  --accent-hover: #0a3d6d;
+  --muted: #64748b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b1220;
+    --foreground: #e2e8f0;
+    --card: #111827;
+    --card-border: #1e293b;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --muted: #94a3b8;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+.section-card--tone-0 {
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow:
+    0 4px 18px -4px rgba(59, 130, 246, 0.3),
+    0 2px 8px -2px rgba(59, 130, 246, 0.15);
+}
+.section-card--tone-0 .section-card__header {
+  background: rgba(59, 130, 246, 0.08);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.22);
+  color: #1d4ed8;
+}
+
+.drop-over {
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  border-color: var(--accent) !important;
+}
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+  header,
+  .no-print {
+    display: none !important;
+  }
+}
