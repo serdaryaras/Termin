@@ -1236,7 +1236,15 @@ export function GanttPlanner() {
                   aşama
                 </span>
               </div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-start gap-1.5">
+              <input
+                type="search"
+                value={prioritySearch}
+                onChange={(e) => setPrioritySearch(e.target.value)}
+                placeholder="Aktivite ara…"
+                className="h-9 w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
+                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
+              />
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
                 {(
                   [
                     ["Üst", () => shiftSelectedDir("top"), !place],
@@ -1255,7 +1263,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="h-9 min-w-[5.5rem] rounded border border-[var(--card-border)] px-3 text-sm disabled:opacity-40"
+                    className="h-9 w-[5.5rem] shrink-0 rounded border border-[var(--card-border)] text-sm disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1276,7 +1284,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`h-9 w-[5.5rem] min-w-[5.5rem] rounded text-sm font-semibold tabular-nums disabled:opacity-40 ${
+                      className={`h-9 w-[5.5rem] shrink-0 rounded text-sm font-semibold tabular-nums disabled:opacity-40 ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
@@ -1287,14 +1295,6 @@ export function GanttPlanner() {
                   );
                 })}
               </div>
-              <input
-                type="search"
-                value={prioritySearch}
-                onChange={(e) => setPrioritySearch(e.target.value)}
-                placeholder="Aktivite ara…"
-                className="w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
-                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
-              />
               <div className="flex shrink-0 flex-wrap items-center gap-1">
                 <button
                   type="button"
