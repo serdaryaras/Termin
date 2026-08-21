@@ -185,6 +185,36 @@ function moveStage(stages: Stage[], from: number, to: number): Stage[] {
   return copy;
 }
 
+/** Seçili işlerin aşamalarını (sıra korunarak) hedef işin aşamasının önüne taşır */
+export function moveJobsGroupBefore(plan: Plan, jobIds: string[], targetJobId: string): Plan {
+  const want = [...new Set(jobIds.filter((id) => findPlacement(plan, id)))];
+  if (!want.length) return plan;
+  if (want.includes(targetJobId)) return plan;
+
+  const next = clonePlan(plan);
+  const stageIndexOf = (jobId: string): number => {
+    for (let s = 0; s < next.stages.length; s++) {
+      if (next.stages[s]!.jobIds.includes(jobId)) return s;
+    }
+    return -1;
+  };
+
+  const stagesToMove = [
+    ...new Set(want.map((id) => stageIndexOf(id)).filter((i) => i >= 0)),
+  ].sort((a, b) => a - b);
+  if (!stagesToMove.length) return plan;
+
+  const extracted = stagesToMove.map((i) => ({ jobIds: [...next.stages[i]!.jobIds] }));
+  for (let k = stagesToMove.length - 1; k >= 0; k--) {
+    next.stages.splice(stagesToMove[k]!, 1);
+  }
+
+  let insertAt = stageIndexOf(targetJobId);
+  if (insertAt < 0) insertAt = next.stages.length;
+  next.stages.splice(insertAt, 0, ...extracted);
+  return next;
+}
+
 export function moveSelectedStage(plan: Plan, jobId: string, dir: "top" | "bottom" | "up" | "down"): Plan {
   const place = findPlacement(plan, jobId);
   if (!place) return plan;
@@ -208,6 +238,56 @@ export function moveSelectedStageBy(plan: Plan, jobId: string, delta: number): P
   if (target === from) return plan;
   const next = clonePlan(plan);
   next.stages = moveStage(next.stages, from, delta > 0 ? target + 1 : target);
+  return next;
+}
+
+/** Seçili işlerin aşamalarını (tekrarsız) sıra indeksine göre döndür */
+function selectedStageReps(plan: Plan, jobIds: string[]): { jobId: string; stageIndex: number }[] {
+  const byStage = new Map<number, string>();
+  for (const id of jobIds) {
+    const place = findPlacement(plan, id);
+    if (!place) continue;
+    if (!byStage.has(place.stageIndex)) byStage.set(place.stageIndex, id);
+  }
+  return [...byStage.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([stageIndex, jobId]) => ({ jobId, stageIndex }));
+}
+
+/** Birden fazla seçili aşamayı aynı delta ile kaydır (göreli sıra korunur) */
+export function moveJobsByDelta(plan: Plan, jobIds: string[], delta: number): Plan {
+  if (!delta || !jobIds.length) return plan;
+  const reps = selectedStageReps(plan, jobIds);
+  if (!reps.length) return plan;
+  let next = plan;
+  const ordered = delta > 0 ? [...reps].reverse() : reps;
+  for (const { jobId } of ordered) {
+    next = moveSelectedStageBy(next, jobId, delta);
+  }
+  return next;
+}
+
+/** Birden fazla seçili aşamayı üste / alta / bir adım kaydır */
+export function moveJobsDir(
+  plan: Plan,
+  jobIds: string[],
+  dir: "top" | "bottom" | "up" | "down"
+): Plan {
+  if (!jobIds.length) return plan;
+  if (dir === "up") return moveJobsByDelta(plan, jobIds, -1);
+  if (dir === "down") return moveJobsByDelta(plan, jobIds, 1);
+
+  const reps = selectedStageReps(plan, jobIds);
+  if (!reps.length) return plan;
+  const next = clonePlan(plan);
+  const indices = reps.map((r) => r.stageIndex).sort((a, b) => a - b);
+  const block = indices.map((i) => ({ jobIds: [...next.stages[i]!.jobIds] }));
+  const remaining = next.stages.filter((_, i) => !indices.includes(i));
+  if (dir === "top") {
+    next.stages = [...block, ...remaining];
+  } else {
+    next.stages = [...remaining, ...block];
+  }
   return next;
 }
 

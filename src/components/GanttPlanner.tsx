@@ -26,8 +26,11 @@ import {
   ganttRowOverlapsIsoWeek,
   getIsoWeekParts,
   jobById,
+  moveJobsByDelta,
+  moveJobsDir,
   moveSelectedStage,
   moveSelectedStageBy,
+  moveJobsGroupBefore,
   nextIsoWeek,
   parseIsoDate,
   predecessorsOf,
@@ -125,6 +128,7 @@ export function GanttPlanner() {
   const [activeTab, setActiveTab] = useState<"jobs" | "priority" | "gantt" | "track">("jobs");
   const [prioritySearch, setPrioritySearch] = useState("");
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [ganttSelectIds, setGanttSelectIds] = useState<string[]>([]);
   const [trackWeek, setTrackWeek] = useState(() => {
     const { year, week } = getIsoWeekParts(new Date());
     return formatWeekLabel(year, week);
@@ -1728,6 +1732,18 @@ export function GanttPlanner() {
                 {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf
               </p>
             )}
+            <span className="hidden text-[10px] text-[var(--muted)] lg:inline">
+              Tıkla = seç · sürükle = grubu taşı
+            </span>
+            {ganttSelectIds.length > 0 && (
+              <button
+                type="button"
+                className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px]"
+                onClick={() => setGanttSelectIds([])}
+              >
+                Seçimi temizle ({ganttSelectIds.length})
+              </button>
+            )}
             {saveStatus && (
               <span className="hidden text-[10px] text-[var(--muted)] sm:inline">{saveStatus}</span>
             )}
@@ -1804,6 +1820,15 @@ export function GanttPlanner() {
                         a.localeCompare(b, "tr")
                       ).join(" · ") || "İş planı"
                 }
+                selectedIds={ganttSelectIds}
+                onToggleSelect={(jobId) => {
+                  setGanttSelectIds((prev) =>
+                    prev.includes(jobId) ? prev.filter((x) => x !== jobId) : [...prev, jobId]
+                  );
+                }}
+                onMoveGroupBefore={(jobIds, targetJobId) => {
+                  setPlan((p) => moveJobsGroupBefore(p, jobIds, targetJobId));
+                }}
               />
             </div>
           </div>
@@ -1972,6 +1997,9 @@ function GanttView({
   groupByProject,
   compactLabels = false,
   projectHeading = "",
+  selectedIds = [],
+  onToggleSelect,
+  onMoveGroupBefore,
 }: {
   planStart: string;
   model: ReturnType<typeof computeGantt>;
@@ -1980,6 +2008,9 @@ function GanttView({
   compactLabels?: boolean;
   /** Proje adı başlıkta (satırda tekrarlanmaz) */
   projectHeading?: string;
+  selectedIds?: string[];
+  onToggleSelect?: (jobId: string) => void;
+  onMoveGroupBefore?: (jobIds: string[], targetJobId: string) => void;
 }) {
   const ticks = useMemo(
     () => buildWeekTicks(planStart, model.totalDays),
@@ -1990,6 +2021,10 @@ function GanttView({
   const hourColPx = compactLabels ? 0 : 52;
   const labelsW = nameColPx + hourColPx;
   const labelCols = `${labelsW}px`;
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const dragIdsRef = useRef<string[]>([]);
+  const suppressClickRef = useRef(false);
 
   const sections = useMemo(() => {
     if (!groupByProject) return [{ project: "", rows: model.rows }];
@@ -2006,6 +2041,8 @@ function GanttView({
 
   const stickyLabelClass =
     "sticky left-0 z-10 flex shrink-0 items-center border-r border-[var(--card-border)] shadow-[3px_0_6px_-3px_rgba(15,23,42,0.18)]";
+
+  const interactive = Boolean(onToggleSelect && onMoveGroupBefore && !compactLabels);
 
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
@@ -2067,25 +2104,88 @@ function GanttView({
             {section.rows.map((r) => {
               const left = weekIndexFromPlanStart(planStart, r.startDay) * weekPx;
               const width = Math.max(12, (r.durationDays / WORK_DAYS_PER_WEEK) * weekPx);
+              const isSelected = selectedSet.has(r.job.id);
+              const isDropTarget = dropTargetId === r.job.id;
               return (
                 <div
                   key={r.job.id}
-                  className="grid items-center border-b border-[var(--card-border)]"
+                  className={`grid items-center border-b border-[var(--card-border)] ${
+                    isDropTarget ? "bg-sky-50/80" : ""
+                  }`}
                   style={{ gridTemplateColumns: `${labelCols} 1fr` }}
                 >
                   <div
-                    className={stickyLabelClass}
+                    className={`${stickyLabelClass} ${interactive ? "cursor-pointer" : ""} ${
+                      isSelected ? "ring-1 ring-inset ring-[var(--accent)]" : ""
+                    }`}
                     style={{
                       width: labelsW,
                       minWidth: labelsW,
-                      background: r.tint || "#fff",
+                      background: isSelected
+                        ? "color-mix(in srgb, var(--accent) 14%, white)"
+                        : r.tint || "#fff",
+                    }}
+                    draggable={interactive}
+                    title={
+                      interactive
+                        ? `${r.job.name} · tıkla: seç/kaldır · sürükle: grubu taşı`
+                        : `${r.job.name} · ${r.job.role} · ${r.job.people} kişi`
+                    }
+                    onClick={(e) => {
+                      if (!interactive || !onToggleSelect) return;
+                      if (suppressClickRef.current) {
+                        suppressClickRef.current = false;
+                        return;
+                      }
+                      e.preventDefault();
+                      onToggleSelect(r.job.id);
+                    }}
+                    onDragStart={(e) => {
+                      if (!interactive) return;
+                      suppressClickRef.current = true;
+                      const ids =
+                        selectedSet.has(r.job.id) && selectedIds.length > 0
+                          ? [...selectedIds]
+                          : [r.job.id];
+                      dragIdsRef.current = ids;
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", ids.join(","));
+                    }}
+                    onDragEnd={() => {
+                      dragIdsRef.current = [];
+                      setDropTargetId(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!interactive) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDropTargetId(r.job.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dropTargetId === r.job.id) setDropTargetId(null);
+                    }}
+                    onDrop={(e) => {
+                      if (!interactive || !onMoveGroupBefore) return;
+                      e.preventDefault();
+                      setDropTargetId(null);
+                      const raw = e.dataTransfer.getData("text/plain");
+                      const ids = dragIdsRef.current.length
+                        ? dragIdsRef.current
+                        : raw.split(",").map((s) => s.trim()).filter(Boolean);
+                      dragIdsRef.current = [];
+                      if (!ids.length || ids.includes(r.job.id)) return;
+                      onMoveGroupBefore(ids, r.job.id);
                     }}
                   >
                     <div
                       className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]"
                       style={{ width: nameColPx, minWidth: nameColPx }}
-                      title={`${r.job.name} · ${r.job.role} · ${r.job.people} kişi`}
                     >
+                      {isSelected && selectedIds.length > 1 ? (
+                        <span className="mr-1 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[8px] font-bold text-white">
+                          {selectedIds.indexOf(r.job.id) + 1}
+                        </span>
+                      ) : null}
                       {r.job.name}
                     </div>
                     {!compactLabels && (
@@ -2135,7 +2235,7 @@ function GanttView({
           </span>
         ))}
         <span>
-          Haftalık kişi = paralel akış. CTRL ile öncül→ardıl: ardıl öncül bitmeden başlamaz.
+          Haftalık kişi = paralel akış. Sol isim: tıkla seç, sürükle bırak ile grubu taşı.
         </span>
         {groupByProject && <span>Satırlar projelere göre gruplandı</span>}
       </div>
