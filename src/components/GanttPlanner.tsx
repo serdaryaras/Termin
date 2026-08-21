@@ -121,6 +121,7 @@ export function GanttPlanner() {
   const [pdfStatus, setPdfStatus] = useState("");
   const [pdfCompact, setPdfCompact] = useState(false);
   const [activeTab, setActiveTab] = useState<"jobs" | "priority" | "gantt" | "track">("jobs");
+  const [prioritySearch, setPrioritySearch] = useState("");
   const [trackWeek, setTrackWeek] = useState(() => {
     const { year, week } = getIsoWeekParts(new Date());
     return formatWeekLabel(year, week);
@@ -197,6 +198,36 @@ export function GanttPlanner() {
       rows: gantt.rows.filter((r) => (r.job.project || DEFAULT_PROJECT) === projectFilter),
     };
   }, [gantt, projectFilter]);
+
+  /** Öncelik grid’i: arama yalnızca görünümü daraltır; si gerçek sıra indeksidir (kaydırma / bağ aynı kalır) */
+  const filteredPriorityStages = useMemo(() => {
+    const q = prioritySearch.trim().toLocaleLowerCase("tr");
+    const out: { si: number; jobIds: string[] }[] = [];
+    plan.stages.forEach((stage, si) => {
+      if (!q) {
+        out.push({ si, jobIds: stage.jobIds });
+        return;
+      }
+      const jobIds = stage.jobIds.filter((id) => {
+        const job = jobById(plan, id);
+        if (!job) return false;
+        const week = stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || "";
+        const hay = [
+          job.name,
+          job.role,
+          job.project || "",
+          `A${si + 1}`,
+          week,
+          formatHours(job.hours),
+        ]
+          .join(" ")
+          .toLocaleLowerCase("tr");
+        return hay.includes(q);
+      });
+      if (jobIds.length) out.push({ si, jobIds });
+    });
+    return out;
+  }, [plan, prioritySearch, gantt.rows]);
 
   const sortedCapacities = useMemo(() => {
     return [...plan.weeklyCapacities].sort((a, b) => {
@@ -1124,15 +1155,28 @@ export function GanttPlanner() {
       {activeTab === "priority" && (
         <section className="flex w-full min-w-0 select-none flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] max-h-[calc(100vh-4.25rem)]">
           <div className="shrink-0 border-b border-[var(--card-border)] bg-[var(--card)]">
-            <div className="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5 px-2 py-1">
+              <div className="flex shrink-0 items-center gap-1.5">
                 <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Öncelik</h2>
-                <span className="text-[10px] tabular-nums text-[var(--muted)]">{plan.stages.length} aşama</span>
-                <span className="hidden text-[10px] text-[var(--muted)] sm:inline">CTRL+tık = öncül→ardıl</span>
+                <span className="text-[10px] tabular-nums text-[var(--muted)]">
+                  {prioritySearch.trim()
+                    ? `${filteredPriorityStages.length}/${plan.stages.length}`
+                    : plan.stages.length}{" "}
+                  aşama
+                </span>
+                <span className="hidden text-[10px] text-[var(--muted)] lg:inline">CTRL+tık = öncül→ardıl</span>
                 {saveStatus && (
-                  <span className="hidden text-[10px] text-[var(--muted)] md:inline">{saveStatus}</span>
+                  <span className="hidden text-[10px] text-[var(--muted)] xl:inline">{saveStatus}</span>
                 )}
               </div>
+              <input
+                type="search"
+                value={prioritySearch}
+                onChange={(e) => setPrioritySearch(e.target.value)}
+                placeholder="Aktivite ara…"
+                className="min-w-[10rem] flex-1 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
+                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
+              />
               <div className="flex flex-wrap items-center gap-1">
                 {(
                   [
@@ -1261,14 +1305,22 @@ export function GanttPlanner() {
               <p className="py-4 text-center text-xs text-[var(--muted)]">
                 Soldan bir işi buraya sürükleyin.
               </p>
+            ) : filteredPriorityStages.length === 0 ? (
+              <p className="py-4 text-center text-xs text-[var(--muted)]">
+                Aramaya uyan aktivite yok.
+              </p>
             ) : (
               <div
                 className="grid w-full gap-x-0.5 gap-y-0"
                 style={{ gridTemplateColumns: `repeat(${PRIORITY_COLS}, minmax(0, 1fr))` }}
               >
-                {plan.stages.map((stage, si) => {
-                  const { row, col } = priorityCellPos(si);
-                  const next = si < plan.stages.length - 1 ? priorityCellPos(si + 1) : null;
+                {filteredPriorityStages.map(({ si, jobIds }, di) => {
+                  const stage = plan.stages[si];
+                  const { row, col } = priorityCellPos(di);
+                  const next =
+                    di < filteredPriorityStages.length - 1
+                      ? priorityCellPos(di + 1)
+                      : null;
                   const goesDown = !!next && next.row > row;
                   const goesRight = !!next && next.row === row && next.col > col;
                   const goesLeft = !!next && next.row === row && next.col < col;
@@ -1308,7 +1360,7 @@ export function GanttPlanner() {
                         <span className="shrink-0 tabular-nums">{stageDurationLabel(plan, stage)}</span>
                       </div>
                       <div className="space-y-0.5">
-                        {stage.jobIds.map((id) => {
+                        {jobIds.map((id) => {
                           const job = jobById(plan, id);
                           if (!job) return null;
                           const preds = predecessorsOf(plan, id);
