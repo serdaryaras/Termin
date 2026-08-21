@@ -29,7 +29,7 @@ body {
   min-height: 100vh;
 }
 
-/* Gantt sekmesinde üst logo alanı gizlenir — çizelgeye daha fazla yer */
+/* Gantt / Öncelik sekmelerinde üst logo alanı gizlenir — içeriğe daha fazla yer */
 body[data-gantt-focus="1"] > header {
   display: none;
 }

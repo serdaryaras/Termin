@@ -58,7 +58,7 @@ import {
   type ProgressPercent,
 } from "@/lib/types";
 
-const PRIORITY_COLS = 4;
+const PRIORITY_COLS = 5;
 
 /** Tıklama döngüsü: 100 → 75 → 50 → 25 → 0 → 100… */
 const PROGRESS_CYCLE: ProgressPercent[] = [100, 75, 50, 25, 0];
@@ -165,7 +165,7 @@ export function GanttPlanner() {
   }, [plan, supabaseOn]);
 
   useEffect(() => {
-    const on = activeTab === "gantt";
+    const on = activeTab === "gantt" || activeTab === "priority";
     document.body.dataset.ganttFocus = on ? "1" : "";
     return () => {
       delete document.body.dataset.ganttFocus;
@@ -569,8 +569,8 @@ export function GanttPlanner() {
   };
 
   return (
-    <div className={activeTab === "gantt" ? "space-y-1" : "space-y-6"}>
-      {activeTab !== "gantt" && (
+    <div className={activeTab === "gantt" || activeTab === "priority" ? "space-y-1" : "space-y-6"}>
+      {activeTab !== "gantt" && activeTab !== "priority" && (
       <div className="no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card)] px-3 py-2">
         <div className="min-w-0">
           <p className="text-xs text-[var(--muted)]">
@@ -599,7 +599,7 @@ export function GanttPlanner() {
       </div>
       )}
 
-      <div className={`no-print flex flex-wrap gap-1 border-b border-[var(--card-border)] ${activeTab === "gantt" ? "mb-1" : ""}`}>
+      <div className={`no-print flex flex-wrap gap-1 border-b border-[var(--card-border)] ${activeTab === "gantt" || activeTab === "priority" ? "mb-1" : ""}`}>
         {(
           [
             ["jobs", "İş listesi & kapasite", plan.jobs.length],
@@ -613,7 +613,7 @@ export function GanttPlanner() {
             type="button"
             onClick={() => setActiveTab(id)}
             className={`rounded-t-lg font-medium transition-colors ${
-              activeTab === "gantt"
+              activeTab === "gantt" || activeTab === "priority"
                 ? "px-3 py-1.5 text-xs"
                 : "px-4 py-2.5 text-sm"
             } ${
@@ -1122,143 +1122,150 @@ export function GanttPlanner() {
       )}
 
       {activeTab === "priority" && (
-        <section className="flex w-full min-w-0 select-none flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] max-h-[calc(100vh-6.5rem)]">
+        <section className="flex w-full min-w-0 select-none flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] max-h-[calc(100vh-4.25rem)]">
           <div className="shrink-0 border-b border-[var(--card-border)] bg-[var(--card)]">
-          <div className="flex items-baseline justify-between gap-2 px-2.5 py-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wider">Öncelik sırası</h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] text-[var(--muted)]">CTRL+tık = öncül→ardıl</span>
-              <button
-                type="button"
-                disabled={!canClearSelectedLinks}
-                className="no-print rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px] disabled:opacity-40"
-                title="Seçili aktivitelerin öncül–ardıl bağlarını sil"
-                onClick={() => {
-                  setPlan(clearDependenciesForJobs(plan, linkTargetIds));
-                  setSelectChain(selected ? [selected] : []);
-                }}
-              >
-                Bağları sil
-              </button>
-              <button
-                type="button"
-                disabled={plan.stages.length === 0}
-                className="no-print rounded border border-rose-200 px-1.5 py-0.5 text-[10px] text-rose-700 disabled:opacity-40"
-                title="Tüm öncelik sırasını sil (iş kalemleri kalır)"
-                onClick={() => {
-                  if (!plan.stages.length) return;
-                  if (!confirm("Öncelik sırası tamamen silinsin mi? İş kalemleri listede kalır.")) return;
-                  setPlan(clearPriorityOrder(plan));
-                  setSelected(null);
-                  setSelectChain([]);
-                }}
-              >
-                Sırayı sil
-              </button>
-            </div>
-          </div>
-
-          <div className="no-print flex flex-wrap gap-1 border-t border-[var(--card-border)] px-2 py-1.5">
-            {(
-              [
-                ["Üst", () => shiftSelectedDir("top"), !place],
-                ["↑", () => shiftSelectedDir("up"), !place || place.stageIndex === 0],
-                [
-                  "↓",
-                  () => shiftSelectedDir("down"),
-                  !place || place.stageIndex === plan.stages.length - 1,
-                ],
-                ["Alt", () => shiftSelectedDir("bottom"), !place],
-              ] as [string, () => void, boolean][]
-            ).map(([label, fn, disabled]) => (
-              <button
-                key={label}
-                type="button"
-                disabled={disabled}
-                onClick={fn}
-                title={label}
-                className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[11px] disabled:opacity-40"
-              >
-                {label}
-              </button>
-            ))}
-            {selectChain.length > 0 && (
-              <button
-                type="button"
-                className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[11px]"
-                onClick={() => setSelectChain(selected ? [selected] : [])}
-              >
-                Seçimi sıfırla
-              </button>
-            )}
-          </div>
-          <p className="no-print border-t border-[var(--card-border)] px-2 py-1 text-[10px] text-[var(--muted)]">
-            CTRL ile sırayla tıklayın: 1. öncül, 2. ardıl… Ardıl, öncül bitmeden (kapasite olsa bile) başlamaz.
-          </p>
-
-          <div className="mx-2 mb-1.5 mt-1.5 flex flex-wrap items-stretch gap-2">
-            <div
-              className={`min-w-[7rem] flex-1 rounded-lg border-2 border-dashed px-3 py-3 text-center text-sm font-medium ${
-                overId === "start-top"
-                  ? "drop-over border-[var(--accent)]"
-                  : "border-sky-300 bg-sky-50 text-sky-800"
-              }`}
-              onDragOver={allowDrop("start-top")}
-              onDragLeave={() => setOverId(null)}
-              onDrop={dropJob(0, true)}
-            >
-              Başa bırak
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 py-1.5">
-              {([-20, -10, -1, 1, 10, 20] as const).map((delta) => {
-                const disabled =
-                  !place ||
-                  (delta < 0 && place.stageIndex === 0) ||
-                  (delta > 0 && place.stageIndex >= plan.stages.length - 1);
-                return (
+            <div className="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Öncelik</h2>
+                <span className="text-[10px] tabular-nums text-[var(--muted)]">{plan.stages.length} aşama</span>
+                <span className="hidden text-[10px] text-[var(--muted)] sm:inline">CTRL+tık = öncül→ardıl</span>
+                {saveStatus && (
+                  <span className="hidden text-[10px] text-[var(--muted)] md:inline">{saveStatus}</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                {(
+                  [
+                    ["Üst", () => shiftSelectedDir("top"), !place],
+                    ["↑", () => shiftSelectedDir("up"), !place || place.stageIndex === 0],
+                    [
+                      "↓",
+                      () => shiftSelectedDir("down"),
+                      !place || place.stageIndex === plan.stages.length - 1,
+                    ],
+                    ["Alt", () => shiftSelectedDir("bottom"), !place],
+                  ] as [string, () => void, boolean][]
+                ).map(([label, fn, disabled]) => (
                   <button
-                    key={`shift-top-${delta}`}
+                    key={label}
                     type="button"
                     disabled={disabled}
-                    title={
-                      delta > 0
-                        ? `Seçili işi ${delta} sıra aşağı kaydır`
-                        : `Seçili işi ${Math.abs(delta)} sıra yukarı kaydır`
-                    }
-                    onClick={() => shiftSelectedBy(delta)}
-                    className={`min-w-[2.75rem] rounded-md px-2 py-2 text-xs font-semibold tabular-nums disabled:opacity-40 ${
-                      delta > 0
-                        ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
-                        : "bg-sky-100 text-sky-900 hover:bg-sky-200"
-                    }`}
+                    onClick={fn}
+                    title={label}
+                    className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px] disabled:opacity-40"
                   >
-                    {delta > 0 ? `+${delta}` : delta}
+                    {label}
                   </button>
-                );
-              })}
+                ))}
+                {([-20, -10, -1, 1, 10, 20] as const).map((delta) => {
+                  const disabled =
+                    !place ||
+                    (delta < 0 && place.stageIndex === 0) ||
+                    (delta > 0 && place.stageIndex >= plan.stages.length - 1);
+                  return (
+                    <button
+                      key={`shift-bar-${delta}`}
+                      type="button"
+                      disabled={disabled}
+                      title={
+                        delta > 0
+                          ? `Seçili işi ${delta} sıra aşağı`
+                          : `Seçili işi ${Math.abs(delta)} sıra yukarı`
+                      }
+                      onClick={() => shiftSelectedBy(delta)}
+                      className={`min-w-[1.75rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums disabled:opacity-40 ${
+                        delta > 0
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-sky-100 text-sky-900"
+                      }`}
+                    >
+                      {delta > 0 ? `+${delta}` : delta}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  disabled={!canClearSelectedLinks}
+                  className="no-print rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                  title="Seçili aktivitelerin öncül–ardıl bağlarını sil"
+                  onClick={() => {
+                    setPlan(clearDependenciesForJobs(plan, linkTargetIds));
+                    setSelectChain(selected ? [selected] : []);
+                  }}
+                >
+                  Bağları sil
+                </button>
+                <button
+                  type="button"
+                  disabled={plan.stages.length === 0}
+                  className="no-print rounded border border-rose-200 px-1.5 py-0.5 text-[10px] text-rose-700 disabled:opacity-40"
+                  title="Tüm öncelik sırasını sil"
+                  onClick={() => {
+                    if (!plan.stages.length) return;
+                    if (!confirm("Öncelik sırası tamamen silinsin mi? İş kalemleri listede kalır.")) return;
+                    setPlan(clearPriorityOrder(plan));
+                    setSelected(null);
+                    setSelectChain([]);
+                  }}
+                >
+                  Sırayı sil
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void forceSave()}
+                  className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px]"
+                >
+                  Kaydet
+                </button>
+                {selectChain.length > 0 && (
+                  <button
+                    type="button"
+                    className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px]"
+                    onClick={() => setSelectChain(selected ? [selected] : [])}
+                  >
+                    Seçimi sıfırla
+                  </button>
+                )}
+              </div>
             </div>
-            <div
-              className={`min-w-[7rem] flex-1 rounded-lg border-2 border-dashed px-3 py-3 text-center text-sm font-medium ${
-                overId === "end-top"
-                  ? "drop-over border-[var(--accent)]"
-                  : "border-amber-300 bg-amber-50 text-amber-900"
-              }`}
-              onDragOver={allowDrop("end-top")}
-              onDragLeave={() => setOverId(null)}
-              onDrop={dropJob(plan.stages.length, true)}
-            >
-              Sona bırak
+            <div className="mx-2 mb-1 flex gap-1">
+              <div
+                className={`flex-1 rounded border border-dashed px-2 py-1 text-center text-[10px] font-medium ${
+                  overId === "start-top"
+                    ? "drop-over border-[var(--accent)]"
+                    : "border-sky-300 bg-sky-50 text-sky-800"
+                }`}
+                onDragOver={allowDrop("start-top")}
+                onDragLeave={() => setOverId(null)}
+                onDrop={dropJob(0, true)}
+              >
+                Başa bırak
+              </div>
+              <div
+                className={`flex-1 rounded border border-dashed px-2 py-1 text-center text-[10px] font-medium ${
+                  overId === "end-top"
+                    ? "drop-over border-[var(--accent)]"
+                    : "border-amber-300 bg-amber-50 text-amber-900"
+                }`}
+                onDragOver={allowDrop("end-top")}
+                onDragLeave={() => setOverId(null)}
+                onDrop={dropJob(plan.stages.length, true)}
+              >
+                Sona bırak
+              </div>
             </div>
-          </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto px-2 py-1.5">
+          <div className="min-h-0 flex-1 overflow-auto px-1.5 py-1">
             {plan.stages.length === 0 ? (
               <p className="py-4 text-center text-xs text-[var(--muted)]">
                 Soldan bir işi buraya sürükleyin.
               </p>
             ) : (
-              <div className="grid w-full grid-cols-4 gap-x-1 gap-y-0">
+              <div
+                className="grid w-full gap-x-0.5 gap-y-0"
+                style={{ gridTemplateColumns: `repeat(${PRIORITY_COLS}, minmax(0, 1fr))` }}
+              >
                 {plan.stages.map((stage, si) => {
                   const { row, col } = priorityCellPos(si);
                   const next = si < plan.stages.length - 1 ? priorityCellPos(si + 1) : null;
@@ -1271,11 +1278,11 @@ export function GanttPlanner() {
                     className="relative flex min-w-0 flex-col"
                     style={{ gridRow: row + 1, gridColumn: col + 1 }}
                   >
-                    <div className="flex min-w-0 flex-1 items-start gap-0.5">
-                    <div className="flex w-3.5 shrink-0 items-center justify-center self-center">
+                    <div className="flex min-w-0 flex-1 items-start gap-0">
+                    <div className="flex w-2.5 shrink-0 items-center justify-center self-center">
                       {goesLeft ? (
                         <span
-                          className="text-[11px] leading-none text-[var(--muted)]"
+                          className="text-[9px] leading-none text-[var(--muted)]"
                           title="Sıradaki (sola)"
                           aria-hidden
                         >
@@ -1284,7 +1291,7 @@ export function GanttPlanner() {
                       ) : null}
                     </div>
                     <div
-                      className={`min-w-0 flex-1 rounded-md border px-1.5 py-1 ${
+                      className={`min-w-0 flex-1 rounded border px-1 py-0.5 ${
                         overId === `st-${si}` || overId === `ins-${si}`
                           ? "drop-over"
                           : "border-[var(--card-border)] bg-[var(--background)]"
@@ -1293,9 +1300,9 @@ export function GanttPlanner() {
                       onDragLeave={() => setOverId(null)}
                       onDrop={dropJob(si, true)}
                     >
-                      <div className="mb-0.5 flex items-center justify-between gap-1 px-0.5 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                      <div className="mb-0.5 flex items-center justify-between gap-0.5 px-0.5 text-[9px] uppercase tracking-wider text-[var(--muted)]">
                         <span className="shrink-0">A{si + 1}</span>
-                        <span className="min-w-0 flex-1 truncate px-1 text-center tabular-nums font-medium normal-case tracking-normal text-[var(--accent)]">
+                        <span className="min-w-0 flex-1 truncate px-0.5 text-center tabular-nums font-medium normal-case tracking-normal text-[var(--accent)]">
                           {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || ""}
                         </span>
                         <span className="shrink-0 tabular-nums">{stageDurationLabel(plan, stage)}</span>
@@ -1316,7 +1323,7 @@ export function GanttPlanner() {
                               draggable
                               onClick={(e) => onPriorityClick(id, e)}
                               onDragStart={onDragStart(id)}
-                              className={`relative flex min-w-0 cursor-grab select-none flex-col gap-0.5 rounded border px-1.5 py-1 ${
+                              className={`relative flex min-w-0 cursor-grab select-none flex-col gap-0 rounded border px-1 py-0.5 ${
                                 isSelected
                                   ? "border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/30"
                                   : preds.length || succs.length
@@ -1324,17 +1331,17 @@ export function GanttPlanner() {
                                     : "border-[var(--card-border)]/60 bg-[var(--card)] hover:border-[var(--card-border)]"
                               }`}
                             >
-                              <div className="flex items-start gap-1">
+                              <div className="flex items-center gap-0.5">
                                 {inChain && (
                                   <span
-                                    className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[9px] font-bold text-white"
+                                    className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[8px] font-bold text-white"
                                     title={`Seçim sırası ${chainIdx + 1}`}
                                   >
                                     {chainIdx + 1}
                                   </span>
                                 )}
                                 <h3
-                                  className="min-w-0 flex-1 text-[11px] font-medium leading-snug"
+                                  className="min-w-0 flex-1 truncate text-[10px] font-medium leading-tight"
                                   title={job.name}
                                 >
                                   {job.name}
@@ -1342,7 +1349,7 @@ export function GanttPlanner() {
                                 <button
                                   type="button"
                                   title="İşi kalıcı sil"
-                                  className="no-print shrink-0 px-0.5 text-xs leading-none text-[var(--muted)] hover:text-rose-700"
+                                  className="no-print shrink-0 px-0.5 text-[10px] leading-none text-[var(--muted)] hover:text-rose-700"
                                   onClick={(ev) => {
                                     ev.stopPropagation();
                                     if (!confirm(`“${job.name}” silinsin mi?`)) return;
@@ -1354,7 +1361,7 @@ export function GanttPlanner() {
                                   ×
                                 </button>
                               </div>
-                              <div className="flex items-baseline justify-between gap-1 text-[10px]">
+                              <div className="flex items-baseline justify-between gap-1 text-[9px]">
                                 <span className="truncate text-[var(--muted)]" title={job.role}>
                                   {job.role}
                                 </span>
@@ -1367,9 +1374,9 @@ export function GanttPlanner() {
                                   {preds.map((pid) => (
                                     <div
                                       key={`p-${pid}`}
-                                      className="flex items-center gap-1 text-[9px] leading-tight text-amber-800"
+                                      className="flex items-center gap-1 text-[8px] leading-tight text-amber-800"
                                     >
-                                      <span className="shrink-0 rounded bg-amber-100 px-1 font-semibold uppercase tracking-wide">
+                                      <span className="shrink-0 rounded bg-amber-100 px-0.5 font-semibold uppercase tracking-wide">
                                         Öncül
                                       </span>
                                       <span className="min-w-0 truncate" title={shortJobName(pid)}>
@@ -1391,9 +1398,9 @@ export function GanttPlanner() {
                                   {succs.map((sid) => (
                                     <div
                                       key={`s-${sid}`}
-                                      className="flex items-center gap-1 text-[9px] leading-tight text-sky-800"
+                                      className="flex items-center gap-1 text-[8px] leading-tight text-sky-800"
                                     >
-                                      <span className="shrink-0 rounded bg-sky-100 px-1 font-semibold uppercase tracking-wide">
+                                      <span className="shrink-0 rounded bg-sky-100 px-0.5 font-semibold uppercase tracking-wide">
                                         Ardıl
                                       </span>
                                       <span className="min-w-0 truncate" title={shortJobName(sid)}>
@@ -1419,10 +1426,10 @@ export function GanttPlanner() {
                         })}
                       </div>
                     </div>
-                    <div className="flex w-3.5 shrink-0 items-center justify-center self-center">
+                    <div className="flex w-2.5 shrink-0 items-center justify-center self-center">
                       {goesRight ? (
                         <span
-                          className="text-[11px] leading-none text-[var(--muted)]"
+                          className="text-[9px] leading-none text-[var(--muted)]"
                           title="Sıradaki (sağa)"
                           aria-hidden
                         >
@@ -1431,10 +1438,10 @@ export function GanttPlanner() {
                       ) : null}
                     </div>
                     </div>
-                    <div className="flex h-3.5 shrink-0 items-start justify-center">
+                    <div className="flex h-2.5 shrink-0 items-start justify-center">
                       {goesDown ? (
                         <span
-                          className="text-[11px] leading-none text-[var(--muted)]"
+                          className="text-[9px] leading-none text-[var(--muted)]"
                           title="Alt satıra geç"
                           aria-hidden
                         >
@@ -1457,9 +1464,9 @@ export function GanttPlanner() {
             )}
           </div>
 
-          <div className="mx-2 mb-2 mt-1 shrink-0 flex flex-wrap items-stretch gap-2 border-t border-[var(--card-border)] pt-2">
+          <div className="mx-2 mb-1 mt-0.5 shrink-0 flex gap-1 border-t border-[var(--card-border)] pt-1">
             <div
-              className={`min-w-[7rem] flex-1 rounded-lg border-2 border-dashed px-3 py-3 text-center text-sm font-medium ${
+              className={`flex-1 rounded border border-dashed px-2 py-1 text-center text-[10px] font-medium ${
                 overId === "start-bottom"
                   ? "drop-over border-[var(--accent)]"
                   : "border-sky-300 bg-sky-50 text-sky-800"
@@ -1470,36 +1477,8 @@ export function GanttPlanner() {
             >
               Başa bırak
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 py-1.5">
-              {([-20, -10, -1, 1, 10, 20] as const).map((delta) => {
-                const disabled =
-                  !place ||
-                  (delta < 0 && place.stageIndex === 0) ||
-                  (delta > 0 && place.stageIndex >= plan.stages.length - 1);
-                return (
-                  <button
-                    key={`shift-bottom-${delta}`}
-                    type="button"
-                    disabled={disabled}
-                    title={
-                      delta > 0
-                        ? `Seçili işi ${delta} sıra aşağı kaydır`
-                        : `Seçili işi ${Math.abs(delta)} sıra yukarı kaydır`
-                    }
-                    onClick={() => shiftSelectedBy(delta)}
-                    className={`min-w-[2.75rem] rounded-md px-2 py-2 text-xs font-semibold tabular-nums disabled:opacity-40 ${
-                      delta > 0
-                        ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
-                        : "bg-sky-100 text-sky-900 hover:bg-sky-200"
-                    }`}
-                  >
-                    {delta > 0 ? `+${delta}` : delta}
-                  </button>
-                );
-              })}
-            </div>
             <div
-              className={`min-w-[7rem] flex-1 rounded-lg border-2 border-dashed px-3 py-3 text-center text-sm font-medium ${
+              className={`flex-1 rounded border border-dashed px-2 py-1 text-center text-[10px] font-medium ${
                 overId === "end-bottom"
                   ? "drop-over border-[var(--accent)]"
                   : "border-amber-300 bg-amber-50 text-amber-900"
