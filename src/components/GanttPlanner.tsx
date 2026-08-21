@@ -123,6 +123,7 @@ export function GanttPlanner() {
   const [pdfCompact, setPdfCompact] = useState(false);
   const [activeTab, setActiveTab] = useState<"jobs" | "priority" | "gantt" | "track">("jobs");
   const [prioritySearch, setPrioritySearch] = useState("");
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [trackWeek, setTrackWeek] = useState(() => {
     const { year, week } = getIsoWeekParts(new Date());
     return formatWeekLabel(year, week);
@@ -525,6 +526,16 @@ export function GanttPlanner() {
   };
 
   const onPriorityClick = (jobId: string, e: MouseEvent) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+      setEditingJobId(jobId);
+      setSelectChain([jobId]);
+      setSelected(jobId);
+      return;
+    }
+    if (editingJobId && editingJobId !== jobId) {
+      setEditingJobId(null);
+    }
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       setSelectChain((prev) => {
@@ -542,10 +553,34 @@ export function GanttPlanner() {
     if (selected === jobId && selectChain.length <= 1) {
       setSelected(null);
       setSelectChain([]);
+      setEditingJobId(null);
       return;
     }
     setSelectChain([jobId]);
     setSelected(jobId);
+  };
+
+  const patchJob = (jobId: string, patch: Partial<{ name: string; role: string; hours: number; people: number; project: string }>) => {
+    setPlan((p) => ({
+      ...p,
+      jobs: p.jobs.map((j) => {
+        if (j.id !== jobId) return j;
+        return {
+          ...j,
+          name: patch.name != null ? patch.name : j.name,
+          role: patch.role != null ? normalizeRole(patch.role) || j.role : j.role,
+          hours:
+            patch.hours != null && Number.isFinite(patch.hours)
+              ? Math.max(0.5, patch.hours)
+              : j.hours,
+          people:
+            patch.people != null && Number.isFinite(patch.people)
+              ? Math.max(1, Math.round(patch.people))
+              : j.people,
+          project: patch.project != null ? patch.project.trim() || j.project : j.project,
+        };
+      }),
+    }));
   };
 
   const scrollPriorityJobIntoView = (jobId: string) => {
@@ -1162,6 +1197,16 @@ export function GanttPlanner() {
 
       {activeTab === "priority" && (
         <section className="flex w-full min-w-0 select-none flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] max-h-[calc(100vh-4.25rem)]">
+          <datalist id="priority-roles">
+            {ROLE_OPTIONS.map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
+          <datalist id="priority-projects">
+            {projects.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
           <div className="shrink-0 border-b border-[var(--card-border)] bg-[var(--card)]">
             <div className="flex flex-wrap items-center gap-1.5 px-2 py-1">
               <div className="flex shrink-0 items-center gap-1.5">
@@ -1169,7 +1214,7 @@ export function GanttPlanner() {
                 <select
                   value={projectFilter}
                   onChange={(e) => setProjectFilter(e.target.value)}
-                  className="h-7 max-w-[14rem] rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 text-[11px] text-[var(--foreground)]"
+                  className="h-7 max-w-[12rem] rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 text-[11px] text-[var(--foreground)]"
                   title="İşlem yapılan proje"
                 >
                   <option value="all">Tüm projeler</option>
@@ -1185,20 +1230,8 @@ export function GanttPlanner() {
                     : plan.stages.length}{" "}
                   aşama
                 </span>
-                <span className="hidden text-[10px] text-[var(--muted)] lg:inline">CTRL+tık = öncül→ardıl</span>
-                {saveStatus && (
-                  <span className="hidden text-[10px] text-[var(--muted)] xl:inline">{saveStatus}</span>
-                )}
               </div>
-              <input
-                type="search"
-                value={prioritySearch}
-                onChange={(e) => setPrioritySearch(e.target.value)}
-                placeholder="Aktivite ara…"
-                className="w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
-                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
-              />
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-start gap-1.5">
                 {(
                   [
                     ["Üst", () => shiftSelectedDir("top"), !place],
@@ -1217,7 +1250,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="rounded border border-[var(--card-border)] px-2.5 py-1 text-[11px] disabled:opacity-40"
+                    className="rounded border border-[var(--card-border)] px-3 py-1.5 text-[11px] disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1238,7 +1271,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`min-w-[2.25rem] rounded px-2 py-1 text-[11px] font-semibold tabular-nums disabled:opacity-40 ${
+                      className={`min-w-[2.75rem] flex-1 rounded px-3 py-1.5 text-[11px] font-semibold tabular-nums disabled:opacity-40 sm:flex-none ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
@@ -1248,6 +1281,16 @@ export function GanttPlanner() {
                     </button>
                   );
                 })}
+              </div>
+              <input
+                type="search"
+                value={prioritySearch}
+                onChange={(e) => setPrioritySearch(e.target.value)}
+                placeholder="Aktivite ara…"
+                className="w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
+                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
+              />
+              <div className="flex shrink-0 flex-wrap items-center gap-1">
                 <button
                   type="button"
                   disabled={!canClearSelectedLinks}
@@ -1392,29 +1435,105 @@ export function GanttPlanner() {
                           const inChain = chainIdx >= 0;
                           const isSelected = selected === id || inChain;
                           const tone = categoryTone(activityCategory(job.name));
+                          const isEditing = editingJobId === id;
                           return (
                             <article
                               key={id}
                               id={`priority-job-${id}`}
-                              draggable
+                              draggable={!isEditing}
                               onClick={(e) => onPriorityClick(id, e)}
-                              onDragStart={onDragStart(id)}
+                              onDragStart={isEditing ? undefined : onDragStart(id)}
                               style={
-                                isSelected
+                                isSelected || isEditing
                                   ? undefined
                                   : {
                                       background: tone.bg,
                                       borderColor: tone.border,
                                     }
                               }
-                              className={`relative flex min-w-0 cursor-grab select-none flex-col gap-0 rounded border px-1 py-0.5 ${
-                                isSelected
-                                  ? "border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/30"
-                                  : preds.length || succs.length
-                                    ? "border-amber-400/70"
-                                    : "hover:brightness-[0.98]"
+                              className={`relative flex min-w-0 flex-col gap-0 rounded border px-1 py-0.5 ${
+                                isEditing
+                                  ? "cursor-default border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/40 select-text"
+                                  : isSelected
+                                    ? "cursor-grab select-none border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/30"
+                                    : preds.length || succs.length
+                                      ? "cursor-grab select-none border-amber-400/70"
+                                      : "cursor-grab select-none hover:brightness-[0.98]"
                               }`}
                             >
+                              {isEditing ? (
+                                <div
+                                  className="space-y-1 py-0.5"
+                                  onClick={(ev) => ev.stopPropagation()}
+                                  onKeyDown={(ev) => {
+                                    if (ev.key === "Escape") setEditingJobId(null);
+                                  }}
+                                >
+                                  <input
+                                    autoFocus
+                                    value={job.name}
+                                    onChange={(e) => patchJob(id, { name: e.target.value })}
+                                    className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] font-medium"
+                                    placeholder="İş kalemi"
+                                  />
+                                  <div className="grid grid-cols-2 gap-1">
+                                    <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                      Saat
+                                      <input
+                                        type="number"
+                                        min={0.5}
+                                        step={0.5}
+                                        value={job.hours}
+                                        onChange={(e) =>
+                                          patchJob(id, { hours: Number(e.target.value) })
+                                        }
+                                        className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--foreground)]"
+                                      />
+                                    </label>
+                                    <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                      Kişi
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        step={1}
+                                        value={job.people}
+                                        onChange={(e) =>
+                                          patchJob(id, { people: Number(e.target.value) })
+                                        }
+                                        className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--foreground)]"
+                                      />
+                                    </label>
+                                  </div>
+                                  <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                    Personel
+                                    <input
+                                      list="priority-roles"
+                                      value={job.role}
+                                      onChange={(e) => patchJob(id, { role: e.target.value })}
+                                      className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
+                                    />
+                                  </label>
+                                  <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                    Proje
+                                    <input
+                                      list="priority-projects"
+                                      value={job.project || ""}
+                                      onChange={(e) => patchJob(id, { project: e.target.value })}
+                                      className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
+                                    />
+                                  </label>
+                                  <div className="flex justify-end gap-1 pt-0.5">
+                                    <button
+                                      type="button"
+                                      className="rounded bg-[var(--accent)] px-2 py-0.5 text-[10px] text-white"
+                                      onClick={() => setEditingJobId(null)}
+                                    >
+                                      Tamam
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
                               <div className="flex items-center gap-0.5">
                                 {inChain && (
                                   <span
@@ -1426,7 +1545,7 @@ export function GanttPlanner() {
                                 )}
                                 <h3
                                   className="min-w-0 flex-1 truncate text-[10px] font-medium leading-tight"
-                                  title={job.name}
+                                  title={`${job.name} · Shift+tık ile düzenle`}
                                 >
                                   {job.name}
                                 </h3>
@@ -1440,6 +1559,7 @@ export function GanttPlanner() {
                                     setPlan(deleteJob(plan, id));
                                     setSelectChain((c) => c.filter((x) => x !== id));
                                     if (selected === id) setSelected(null);
+                                    if (editingJobId === id) setEditingJobId(null);
                                   }}
                                 >
                                   ×
@@ -1504,6 +1624,8 @@ export function GanttPlanner() {
                                     </div>
                                   ))}
                                 </div>
+                              )}
+                                </>
                               )}
                             </article>
                           );
