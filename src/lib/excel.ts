@@ -492,9 +492,90 @@ function splitCapacityLine(line: string): string[] {
 }
 
 /**
- * Excel: proje adı | hafta | personel tipi | kişi sayısı
- * Örn: 252.Simonsen | 2026-35 | Donatım | 3
- * (Eski biçimler 2026.35 / 2026,35 de kabul edilir.)
+ * Matris kapasite: satır1 = ProjeAdı | Donatım | Hull | …
+ * alt satırlar = 2026-35 | 5 | 2 | …
+ */
+function isCapacityMatrix(lines: string[]): boolean {
+  if (lines.length < 2) return false;
+  const header = splitClipboardLine(lines[0]!);
+  if (header.length < 2) return false;
+  const roles = header.slice(1).filter((c) => c.trim());
+  if (!roles.length) return false;
+  // Başlıkta rol adları var, Role:saat veya hafta yok
+  if (roles.some((c) => parseRoleHoursCell(c) || parseWeekToken(c))) return false;
+  // En az bir veri satırı: hafta + sayı
+  for (let i = 1; i < Math.min(lines.length, 8); i++) {
+    const cols = splitClipboardLine(lines[i]!);
+    if (parseWeekToken(cols[0] || "") && cols.slice(1).some((c) => Number.isFinite(parseCapacityPeople(c)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseCapacityMatrixText(
+  lines: string[],
+  defaultYear: number
+): { rows: ParsedCapacityRow[]; skipped: number; duplicates: number } {
+  const header = splitClipboardLine(lines[0]!);
+  let project = (header[0] || "").trim();
+  const h = normalizeHeader(project);
+  if (
+    project &&
+    /^(proje|project|hafta|week)/.test(h) &&
+    !looksLikeProjectName(project)
+  ) {
+    project = "";
+  }
+  project = project || DEFAULT_PROJECT;
+
+  const roles = header.slice(1).map((c) => normalizeRole(c.trim()));
+  const rows: ParsedCapacityRow[] = [];
+  let skipped = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitClipboardLine(lines[i]!);
+    if (!cols.some((c) => c.trim())) {
+      skipped += 1;
+      continue;
+    }
+    const weekTok = parseWeekToken(cols[0] || "");
+    if (!weekTok) {
+      skipped += 1;
+      continue;
+    }
+    const year = weekTok.year ?? defaultYear;
+    const week = weekTok.week;
+    let any = false;
+    for (let c = 0; c < roles.length; c++) {
+      const role = roles[c]!;
+      if (!role || role === "Belirtilmedi") continue;
+      const raw = cols[c + 1];
+      if (raw == null || !String(raw).trim()) continue;
+      const people = parseCapacityPeople(raw);
+      if (!Number.isFinite(people)) {
+        skipped += 1;
+        continue;
+      }
+      rows.push({ project, year, week, role, people });
+      any = true;
+    }
+    if (!any) skipped += 1;
+  }
+
+  const byKey = new Map<string, ParsedCapacityRow>();
+  for (const row of rows) {
+    byKey.set(capacityKey(row.project, row.year, row.week, row.role), row);
+  }
+  const deduped = [...byKey.values()];
+  return { rows: deduped, skipped, duplicates: rows.length - deduped.length };
+}
+
+/**
+ * Excel kapasite.
+ * Öncelik matris: ProjeAdı | Donatım | Hull | …
+ *                2026-35 | 5 | 2 | …
+ * Aksi halde düz: proje | hafta | tip | kişi
  */
 export function parseCapacityText(
   text: string,
@@ -508,9 +589,11 @@ export function parseCapacityText(
 
   if (!lines.length) return { rows: [], skipped: 0, duplicates: 0 };
 
+  if (isCapacityMatrix(lines)) return parseCapacityMatrixText(lines, defaultYear);
+
   let map = { project: 0, year: -1, week: 1, role: 2, people: 3 };
   let start = 0;
-  const first = splitCapacityLine(lines[0]);
+  const first = splitCapacityLine(lines[0]!);
   const kinds = first.map(capacityHeaderKind);
   if (kinds.filter(Boolean).length >= 2) {
     map = { project: -1, year: -1, week: -1, role: -1, people: -1 };
@@ -527,7 +610,7 @@ export function parseCapacityText(
   const rows: ParsedCapacityRow[] = [];
   let skipped = 0;
   for (let i = start; i < lines.length; i++) {
-    const cols = splitCapacityLine(lines[i]);
+    const cols = splitCapacityLine(lines[i]!);
     const project = (map.project >= 0 ? cols[map.project] : "").trim() || DEFAULT_PROJECT;
     const role = normalizeRole(map.role >= 0 ? cols[map.role] : "");
     const people = parseCapacityPeople(map.people >= 0 ? cols[map.people] : "");
@@ -549,7 +632,6 @@ export function parseCapacityText(
     rows.push({ project, year, week, role, people });
   }
 
-  // Aynı proje+hafta+tip tekrarlanırsa yalnızca son satır geçerli
   const byKey = new Map<string, ParsedCapacityRow>();
   for (const row of rows) {
     byKey.set(capacityKey(row.project, row.year, row.week, row.role), row);
@@ -557,6 +639,16 @@ export function parseCapacityText(
   const deduped = [...byKey.values()];
   const duplicates = rows.length - deduped.length;
   return { rows: deduped, skipped, duplicates };
+}
+
+/** Dosyadan kapasite matrisi / düz format */
+export async function parseCapacityFile(
+  file: File,
+  defaultYear: number
+): Promise<{ rows: ParsedCapacityRow[]; skipped: number; duplicates: number; sheetName: string }> {
+  const { text, sheetName } = await readSpreadsheetFileToTsv(file);
+  const parsed = parseCapacityText(text, defaultYear);
+  return { ...parsed, sheetName };
 }
 
 export function formatCapacityChip(c: {

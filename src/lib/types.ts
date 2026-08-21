@@ -98,6 +98,7 @@ export const DEFAULT_PROJECT = "Genel";
 
 export const ROLE_OPTIONS = [
   "Donatım",
+  "Hull",
   "Konstrüksiyon",
   "Kaynakçı",
   "Montajcı",
@@ -120,6 +121,7 @@ export function normalizeRole(raw: string | undefined | null): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/ı/g, "i");
   if (/^donat/.test(key)) return "Donatım";
+  if (/^hull/.test(key)) return "Hull";
   if (/^konstr/.test(key)) return "Konstrüksiyon";
   if (/^kaynak/.test(key)) return "Kaynakçı";
   if (/^montaj/.test(key)) return "Montajcı";

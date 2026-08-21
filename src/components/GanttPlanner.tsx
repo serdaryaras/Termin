@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import { clipboardToText, looksLikeActivityCode, parseCapacityText, parseExcelText, parseJobListFile } from "@/lib/excel";
+import { clipboardToText, looksLikeActivityCode, parseCapacityFile, parseCapacityText, parseExcelText, parseJobListFile } from "@/lib/excel";
 import { exportElementToPdf } from "@/lib/export-pdf";
 import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
@@ -678,13 +678,16 @@ export function GanttPlanner() {
     }
   };
 
-  const importCapacity = (text: string) => {
-    const { rows, skipped, duplicates } = parseCapacityText(text, planYear);
+  const applyCapacityImport = (
+    parsed: { rows: import("@/lib/types").ParsedCapacityRow[]; skipped: number; duplicates: number },
+    sourceLabel?: string
+  ) => {
+    const { rows, skipped, duplicates } = parsed;
     if (!rows.length) {
       setCapError(true);
       setCapStatus(
         skipped
-          ? `${skipped} satır okunamadı. Beklenen: proje | hafta (2026-35) | Donatım/Konstrüksiyon | kişi`
+          ? `${skipped} satır okunamadı. Beklenen: 1. satır ProjeAdı|Donatım|Hull|… · alt satırlar 2026-35|5|2|…`
           : "Kapasite satırı bulunamadı."
       );
       return;
@@ -700,12 +703,33 @@ export function GanttPlanner() {
     setPlan(next);
     setCapError(false);
     setCapStatus(
-      `${rows.length} kayıt uygulandı · tipler: ${[...roles].join(", ")}` +
-        (duplicates ? ` · ${duplicates} mükerrer satır yok sayıldı (son değer alındı)` : "") +
+      (sourceLabel ? `${sourceLabel} · ` : "") +
+        `${rows.length} kayıt · tipler: ${[...roles].join(", ")}` +
+        (duplicates ? ` · ${duplicates} mükerrer yok sayıldı` : "") +
         (skipped ? ` · ${skipped} atlandı` : "") +
         (aligned ? ` · eksen ${aligned}` : "") +
         "."
     );
+  };
+
+  const importCapacity = (text: string) => {
+    applyCapacityImport(parseCapacityText(text, planYear));
+  };
+
+  const importCapacityFromFile = async (file: File | null) => {
+    if (!file) return;
+    setCapError(false);
+    setCapStatus(`Okunuyor: ${file.name}…`);
+    try {
+      const parsed = await parseCapacityFile(file, planYear);
+      applyCapacityImport(
+        parsed,
+        `${file.name}${parsed.sheetName ? ` · ${parsed.sheetName}` : ""}`
+      );
+    } catch (err) {
+      setCapError(true);
+      setCapStatus(err instanceof Error ? err.message : "Excel dosyası okunamadı.");
+    }
   };
 
   const addCapacityManual = () => {
@@ -1013,43 +1037,45 @@ export function GanttPlanner() {
           </div>
 
           <div className="no-print space-y-3 p-4">
-            <textarea
-              rows={3}
-              value={capPaste}
-              placeholder={
-                "proje\thafta\ttip\tkişi\n252.Simonsen\t2026-35\tDonatım\t3\n252.Simonsen\t2026-35\tKonstrüks\t2"
-              }
-              onChange={(e) => setCapPaste(e.target.value)}
-              onPaste={(e) => {
-                const text = clipboardToText(
-                  e.clipboardData.getData("text/plain"),
-                  e.clipboardData.getData("text/html")
-                );
-                if (!text) return;
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <label className="text-sm font-semibold">Excel dosyası yükle</label>
+              <span className="text-[11px] font-normal text-[var(--muted)]">
+                .xlsx · .xls · .csv · ilk sayfa
+              </span>
+            </div>
+            <label
+              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] px-4 py-6 text-center hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
+              onDragOver={(e) => {
                 e.preventDefault();
-                setCapPaste(text);
-                importCapacity(text);
+                e.stopPropagation();
               }}
-              className="w-full rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] p-3 text-sm"
-            />
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => importCapacity(capPaste)}
-                className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm text-white hover:bg-[var(--accent-hover)]"
-              >
-                Kapasiteyi aktar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCapPaste("");
-                  setCapStatus("");
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void importCapacityFromFile(e.dataTransfer.files?.[0] || null);
+              }}
+            >
+              <span className="text-sm font-medium text-[var(--foreground)]">
+                Dosya seç veya buraya sürükle
+              </span>
+              <span className="text-[11px] text-[var(--muted)]">
+                1. satır: Proje adı · Donatım · Hull · … · alt: 2026-35 · 5 · 2
+              </span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                className="sr-only"
+                onChange={(e) => {
+                  void importCapacityFromFile(e.target.files?.[0] || null);
+                  e.target.value = "";
                 }}
-                className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-sm"
-              >
-                Alanı temizle
-              </button>
+              />
+            </label>
+            <p className="text-[11px] text-[var(--muted)]">
+              <strong>1. satır:</strong> proje adı, sonra personel tipleri. <strong>Alt satırlar:</strong>{" "}
+              hafta (<strong>2026-35</strong>) ve her tip için kişi sayısı.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={plan.weeklyCapacities.length === 0}
@@ -1071,6 +1097,50 @@ export function GanttPlanner() {
                 Tüm kapasiteyi sil
               </button>
             </div>
+            {capStatus && (
+              <p className={`text-xs ${capError ? "text-rose-700" : "text-emerald-700"}`}>{capStatus}</p>
+            )}
+            <details className="text-[11px] text-[var(--muted)]">
+              <summary className="cursor-pointer select-none">Pano ile yapıştır (isteğe bağlı)</summary>
+              <div className="mt-2 space-y-2">
+                <textarea
+                  rows={3}
+                  value={capPaste}
+                  placeholder={"252.Simonsen\tDonatım\tHull\n2026-35\t5\t2\n2026-36\t5\t2"}
+                  onChange={(e) => setCapPaste(e.target.value)}
+                  onPaste={(e) => {
+                    const text = clipboardToText(
+                      e.clipboardData.getData("text/plain"),
+                      e.clipboardData.getData("text/html")
+                    );
+                    if (!text) return;
+                    e.preventDefault();
+                    setCapPaste(text);
+                    importCapacity(text);
+                  }}
+                  className="w-full rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] p-2 text-sm text-[var(--foreground)]"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => importCapacity(capPaste)}
+                    className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+                  >
+                    Yapıştırmayı aktar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapPaste("");
+                      setCapStatus("");
+                    }}
+                    className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-sm"
+                  >
+                    Alanı temizle
+                  </button>
+                </div>
+              </div>
+            </details>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={capDeleteProject}
@@ -1158,9 +1228,6 @@ export function GanttPlanner() {
                   : ""}
               </button>
             </div>
-            {capStatus && (
-              <p className={`text-xs ${capError ? "text-rose-700" : "text-emerald-700"}`}>{capStatus}</p>
-            )}
 
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <input
