@@ -1250,7 +1250,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="rounded border border-[var(--card-border)] px-3 py-1.5 text-[11px] disabled:opacity-40"
+                    className="h-9 min-w-[5.5rem] rounded border border-[var(--card-border)] px-3 text-sm disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1271,7 +1271,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`min-w-[2.75rem] flex-1 rounded px-3 py-1.5 text-[11px] font-semibold tabular-nums disabled:opacity-40 sm:flex-none ${
+                      className={`h-9 w-[5.5rem] min-w-[5.5rem] rounded text-sm font-semibold tabular-nums disabled:opacity-40 ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
