@@ -383,7 +383,7 @@ export function GanttPlanner() {
   };
 
   const importCapacity = (text: string) => {
-    const { rows, skipped } = parseCapacityText(text, planYear);
+    const { rows, skipped, duplicates } = parseCapacityText(text, planYear);
     if (!rows.length) {
       setCapError(true);
       setCapStatus(
@@ -404,9 +404,11 @@ export function GanttPlanner() {
     setPlan(next);
     setCapError(false);
     setCapStatus(
-      `${rows.length} kayıt · tipler: ${[...roles].join(", ")}${
-        skipped ? ` · ${skipped} atlandı` : ""
-      }${aligned ? ` · eksen ${aligned}` : ""}.`
+      `${rows.length} kayıt uygulandı · tipler: ${[...roles].join(", ")}` +
+        (duplicates ? ` · ${duplicates} mükerrer satır yok sayıldı (son değer alındı)` : "") +
+        (skipped ? ` · ${skipped} atlandı` : "") +
+        (aligned ? ` · eksen ${aligned}` : "") +
+        "."
     );
   };
 

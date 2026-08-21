@@ -1,4 +1,11 @@
-import { DEFAULT_PROJECT, normalizeRole, ROLE_OPTIONS, type ParsedCapacityRow, type ParsedRow } from "./types";
+import {
+  capacityKey,
+  DEFAULT_PROJECT,
+  normalizeRole,
+  ROLE_OPTIONS,
+  type ParsedCapacityRow,
+  type ParsedRow,
+} from "./types";
 
 const ROLE_OPTIONS_SET = new Set<string>(ROLE_OPTIONS);
 
@@ -275,14 +282,14 @@ function splitCapacityLine(line: string): string[] {
 export function parseCapacityText(
   text: string,
   defaultYear: number
-): { rows: ParsedCapacityRow[]; skipped: number } {
+): { rows: ParsedCapacityRow[]; skipped: number; duplicates: number } {
   const lines = String(text)
     .replace(/^\uFEFF/, "")
     .split(/\r\n|\n|\r/)
     .map((l) => l.replace(/\u00a0/g, " ").trimEnd())
     .filter((l) => l.trim());
 
-  if (!lines.length) return { rows: [], skipped: 0 };
+  if (!lines.length) return { rows: [], skipped: 0, duplicates: 0 };
 
   let map = { project: 0, year: -1, week: 1, role: 2, people: 3 };
   let start = 0;
@@ -324,7 +331,15 @@ export function parseCapacityText(
     }
     rows.push({ project, year, week, role, people });
   }
-  return { rows, skipped };
+
+  // Aynı proje+hafta+tip tekrarlanırsa yalnızca son satır geçerli
+  const byKey = new Map<string, ParsedCapacityRow>();
+  for (const row of rows) {
+    byKey.set(capacityKey(row.project, row.year, row.week, row.role), row);
+  }
+  const deduped = [...byKey.values()];
+  const duplicates = rows.length - deduped.length;
+  return { rows: deduped, skipped, duplicates };
 }
 
 export function formatCapacityChip(c: {
