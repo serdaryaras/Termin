@@ -29,6 +29,15 @@ body {
   min-height: 100vh;
 }
 
+/* Gantt sekmesinde üst logo alanı gizlenir — çizelgeye daha fazla yer */
+body[data-gantt-focus="1"] > header {
+  display: none;
+}
+body[data-gantt-focus="1"] > main {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
 .section-card--tone-0 {
   border-color: rgba(59, 130, 246, 0.35);
   box-shadow:

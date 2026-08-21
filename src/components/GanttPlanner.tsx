@@ -164,6 +164,14 @@ export function GanttPlanner() {
     return () => clearTimeout(t);
   }, [plan, supabaseOn]);
 
+  useEffect(() => {
+    const on = activeTab === "gantt";
+    document.body.dataset.ganttFocus = on ? "1" : "";
+    return () => {
+      delete document.body.dataset.ganttFocus;
+    };
+  }, [activeTab]);
+
   const gantt = useMemo(() => computeGantt(plan), [plan]);
   const place = selected ? findPlacement(plan, selected) : null;
   const linkTargetIds = useMemo(() => {
@@ -561,7 +569,8 @@ export function GanttPlanner() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={activeTab === "gantt" ? "space-y-1" : "space-y-6"}>
+      {activeTab !== "gantt" && (
       <div className="no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card)] px-3 py-2">
         <div className="min-w-0">
           <p className="text-xs text-[var(--muted)]">
@@ -588,8 +597,9 @@ export function GanttPlanner() {
           </button>
         </div>
       </div>
+      )}
 
-      <div className="no-print flex flex-wrap gap-1 border-b border-[var(--card-border)]">
+      <div className={`no-print flex flex-wrap gap-1 border-b border-[var(--card-border)] ${activeTab === "gantt" ? "mb-1" : ""}`}>
         {(
           [
             ["jobs", "İş listesi & kapasite", plan.jobs.length],
@@ -602,7 +612,11 @@ export function GanttPlanner() {
             key={id}
             type="button"
             onClick={() => setActiveTab(id)}
-            className={`rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+            className={`rounded-t-lg font-medium transition-colors ${
+              activeTab === "gantt"
+                ? "px-3 py-1.5 text-xs"
+                : "px-4 py-2.5 text-sm"
+            } ${
               activeTab === id
                 ? "border border-b-0 border-[var(--card-border)] bg-[var(--card)] text-[var(--accent)]"
                 : "text-[var(--muted)] hover:text-[var(--foreground)]"
@@ -1501,30 +1515,41 @@ export function GanttPlanner() {
       )}
 
       {activeTab === "gantt" && (
-      <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4">
-        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wider">Gantt çizelgesi</h2>
-          <div className="flex flex-wrap items-center gap-2">
+      <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-2">
+        <div className="no-print mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Gantt</h2>
             {filteredGantt.rows.length > 0 && (
-              <p className="text-xs text-[var(--muted)]">
+              <p className="truncate text-[11px] text-[var(--muted)]">
                 {projectFilter !== "all" ? `${projectFilter} · ` : ""}
-                {filteredGantt.rows.length} satır · plan {formatHours(gantt.totalHours)} ·{" "}
-                {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hafta ·{" "}
-                {weekRangeLabel(buildWeekTicks(plan.startDate, gantt.totalDays))}
+                {filteredGantt.rows.length} satır · {formatHours(gantt.totalHours)} ·{" "}
+                {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf
               </p>
             )}
+            {saveStatus && (
+              <span className="hidden text-[10px] text-[var(--muted)] sm:inline">{saveStatus}</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void forceSave()}
+              className="rounded-md border border-[var(--card-border)] px-2 py-1 text-[11px]"
+            >
+              Kaydet
+            </button>
             <button
               type="button"
               onClick={() => void exportGanttPdf()}
               disabled={filteredGantt.rows.length === 0}
-              className="no-print rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs text-white hover:bg-[var(--accent-hover)] disabled:opacity-40"
+              className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[11px] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40"
             >
-              PDF kaydet
+              PDF
             </button>
           </div>
         </div>
         {gantt.warnings.length > 0 && (
-          <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <div className="mb-2 max-h-16 overflow-auto rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] text-rose-800">
             {gantt.warnings.map((w) => (
               <div key={w}>{w}</div>
             ))}
@@ -1535,8 +1560,8 @@ export function GanttPlanner() {
             Sıralama oluştukça çizelge burada üretilir. Zaman ekseni proje başlangıç haftasından başlar.
           </p>
         ) : (
-          <div className="max-h-[calc(100vh-11rem)] overflow-auto">
-            <div ref={ganttExportRef} className="inline-block min-w-full bg-white p-2 text-slate-900">
+          <div className="max-h-[calc(100vh-5.5rem)] overflow-auto">
+            <div ref={ganttExportRef} className="inline-block min-w-full bg-white p-1 text-slate-900">
               {pdfCompact && (
                 <div className="mb-3 flex items-center gap-3 border-b border-slate-200 pb-3">
                   {/* next/image PDF yakalamada sorun çıkarabilir — düz img */}
@@ -1550,20 +1575,31 @@ export function GanttPlanner() {
                   <span className="text-xl font-semibold tracking-tight text-[#0d4f8b]">Gantt</span>
                 </div>
               )}
-              <div className="mb-2 text-sm font-semibold text-slate-800">
-                İş Planı
-                {projectFilter !== "all" ? ` · ${projectFilter}` : ""}
-              </div>
-              <p className="mb-3 text-[11px] text-slate-600">
-                {filteredGantt.rows.length} satır · {formatHours(gantt.totalHours)} ·{" "}
-                {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hafta ·{" "}
-                {weekRangeLabel(buildWeekTicks(plan.startDate, gantt.totalDays))}
-              </p>
+              {pdfCompact && (
+                <>
+                  <div className="mb-2 text-sm font-semibold text-slate-800">
+                    İş Planı
+                    {projectFilter !== "all" ? ` · ${projectFilter}` : ""}
+                  </div>
+                  <p className="mb-3 text-[11px] text-slate-600">
+                    {filteredGantt.rows.length} satır · {formatHours(gantt.totalHours)} ·{" "}
+                    {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hafta ·{" "}
+                    {weekRangeLabel(buildWeekTicks(plan.startDate, gantt.totalDays))}
+                  </p>
+                </>
+              )}
               <GanttView
                 planStart={plan.startDate}
                 model={filteredGantt}
                 groupByProject={groupByProject}
                 compactLabels={pdfCompact}
+                projectHeading={
+                  projectFilter !== "all"
+                    ? projectFilter
+                    : [...new Set(filteredGantt.rows.map((r) => r.job.project || DEFAULT_PROJECT))].sort((a, b) =>
+                        a.localeCompare(b, "tr")
+                      ).join(" · ") || "İş planı"
+                }
               />
             </div>
           </div>
@@ -1731,12 +1767,15 @@ function GanttView({
   model,
   groupByProject,
   compactLabels = false,
+  projectHeading = "",
 }: {
   planStart: string;
   model: ReturnType<typeof computeGantt>;
   groupByProject: boolean;
-  /** PDF: Proje / Personel / Saat kolonlarını gizle */
+  /** PDF: Personel / Saat kolonlarını gizle */
   compactLabels?: boolean;
+  /** Proje adı başlıkta (satırda tekrarlanmaz) */
+  projectHeading?: string;
 }) {
   const ticks = useMemo(
     () => buildWeekTicks(planStart, model.totalDays),
@@ -1744,8 +1783,8 @@ function GanttView({
   );
   const bands = useMemo(() => yearBands(ticks), [ticks]);
   const weekPx = Math.max(28, Math.min(48, Math.floor(900 / Math.max(ticks.length, 1))));
-  const labelCols = compactLabels ? "220px" : "200px 90px 120px 70px";
-  const labelSpan = compactLabels ? 1 : 4;
+  const labelCols = compactLabels ? "380px" : "380px 108px 48px";
+  const labelSpan = compactLabels ? 1 : 3;
 
   const sections = useMemo(() => {
     if (!groupByProject) return [{ project: "", rows: model.rows }];
@@ -1763,6 +1802,11 @@ function GanttView({
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
         <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-white shadow-[0_1px_0_0_var(--card-border)]">
+        {projectHeading ? (
+          <div className="border-b border-[var(--card-border)] bg-white px-2 py-1 text-[11px] font-semibold text-[var(--accent)]">
+            {projectHeading}
+          </div>
+        ) : null}
         <div
           className="grid items-stretch bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
@@ -1772,7 +1816,7 @@ function GanttView({
             {bands.map((b) => (
               <div
                 key={b.year}
-                className="border-l border-[var(--card-border)] bg-white px-1 py-1.5 text-center text-[var(--accent)]"
+                className="border-l border-[var(--card-border)] bg-white px-1 py-1 text-center text-[var(--accent)]"
                 style={{ width: b.count * weekPx, minWidth: b.count * weekPx }}
               >
                 {b.year}
@@ -1784,19 +1828,18 @@ function GanttView({
           className="grid items-center border-t border-[var(--card-border)] bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
-          <div className="bg-white px-2 py-2">İş kalemi</div>
+          <div className="bg-white px-2 py-1">İş kalemi</div>
           {!compactLabels && (
             <>
-              <div className="bg-white px-2 py-2">Proje</div>
-              <div className="bg-white px-2 py-2">Personel</div>
-              <div className="bg-white px-2 py-2">Saat</div>
+              <div className="bg-white px-2 py-1">Personel</div>
+              <div className="bg-white px-2 py-1">Saat</div>
             </>
           )}
           <div className="flex">
             {ticks.map((t) => (
               <div
                 key={t.key}
-                className="border-l border-[var(--card-border)] bg-white px-0.5 py-1.5 text-center tabular-nums text-[10px]"
+                className="border-l border-[var(--card-border)] bg-white px-0.5 py-1 text-center tabular-nums text-[10px]"
                 style={{ width: weekPx, minWidth: weekPx }}
                 title={`${t.year} hafta ${formatWeekOnly(t.week)}`}
               >
@@ -1809,7 +1852,7 @@ function GanttView({
         {sections.map((section) => (
           <div key={section.project || "all"}>
             {groupByProject && section.project && (
-              <div className="border-b border-[var(--card-border)] bg-[var(--background)] px-2 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--accent)]">
+              <div className="border-b border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
                 {section.project}
                 <span className="ml-2 font-normal normal-case tracking-normal text-[var(--muted)]">
                   {section.rows.length} aktivite
@@ -1822,28 +1865,29 @@ function GanttView({
               return (
                 <div
                   key={r.job.id}
-                  className="grid items-stretch border-b border-[var(--card-border)]"
+                  className="grid items-center border-b border-[var(--card-border)]"
                   style={{ gridTemplateColumns: `${labelCols} 1fr` }}
                 >
-                  <div className="px-2 py-2">{r.job.name}</div>
+                  <div className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]" title={r.job.name}>
+                    {r.job.name}
+                  </div>
                   {!compactLabels && (
                     <>
-                      <div className="px-2 py-2 text-[var(--muted)]">{r.job.project || DEFAULT_PROJECT}</div>
-                      <div className="px-2 py-2 text-[var(--muted)]">
-                        {r.job.role} · {r.job.people} kişi
+                      <div className="truncate px-2 py-0.5 text-[10px] text-[var(--muted)]" title={`${r.job.role} · ${r.job.people} kişi`}>
+                        {r.job.role} · {r.job.people}
                       </div>
-                      <div className="px-2 py-2">{formatHours(r.job.hours)}</div>
+                      <div className="px-2 py-0.5 text-[10px] tabular-nums">{formatHours(r.job.hours)}</div>
                     </>
                   )}
                   <div
-                    className="relative min-h-9"
+                    className="relative h-6"
                     style={{
                       width: ticks.length * weekPx,
                       backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${weekPx - 1}px, var(--card-border) ${weekPx - 1}px, var(--card-border) ${weekPx}px)`,
                     }}
                   >
                     <div
-                      className={`absolute top-2 flex h-5 items-center overflow-hidden px-1.5 text-[10px] text-white ${
+                      className={`absolute top-1 flex h-4 items-center overflow-hidden px-1 text-[9px] leading-none text-white ${
                         r.capacityOk ? "" : "opacity-50 outline outline-1 outline-rose-500"
                       }`}
                       style={{
@@ -1851,7 +1895,7 @@ function GanttView({
                         width,
                         background: r.color,
                       }}
-                      title={`A${r.stage} · Hat ${r.lane} · ${r.durationDays.toFixed(1)} iş günü · ${(r.durationDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf`}
+                      title={`A${r.stage} · Hat ${r.lane} · ${r.durationDays.toFixed(1)} iş günü · ${(r.durationDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf · ${r.job.project || DEFAULT_PROJECT}`}
                     >
                       H{r.lane}
                     </div>
@@ -1861,10 +1905,10 @@ function GanttView({
             })}
           </div>
         ))}
-      <div className="mt-3 flex flex-wrap gap-4 text-xs text-[var(--muted)]">
+      <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-[var(--muted)]">
         {[...model.roleColors.entries()].map(([role, color]) => (
-          <span key={role} className="inline-flex items-center gap-2">
-            <i className="inline-block h-3 w-3" style={{ background: color }} />
+          <span key={role} className="inline-flex items-center gap-1.5">
+            <i className="inline-block h-2.5 w-2.5" style={{ background: color }} />
             {role}
           </span>
         ))}
