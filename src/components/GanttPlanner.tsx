@@ -9,10 +9,15 @@ import {
   addDependency,
   addJobToStage,
   buildWeekTicks,
-  clearDependenciesForJobs,
+  clearAllJobProgress,
+  clearAllJobs,
   clearAllWeeklyCapacities,
+  clearDependenciesForJobs,
+  clearEntirePlan,
+  clearJobProgressForWeek,
   clearPriorityOrder,
   computeGantt,
+  deleteJob,
   earliestCapacityStartDate,
   findPlacement,
   formatHours,
@@ -25,7 +30,6 @@ import {
   parseIsoDate,
   predecessorsOf,
   removeDependency,
-  removeFromSchedule,
   removeWeeklyCapacity,
   replaceWeeklyCapacity,
   scheduledIds,
@@ -37,7 +41,7 @@ import {
   WORK_DAYS_PER_WEEK,
   yearBands,
 } from "@/lib/schedule";
-import { isSupabaseConfigured, loadPlan, savePlan } from "@/lib/supabase";
+import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/supabase";
 import {
   DEFAULT_PROJECT,
   emptyPlan,
@@ -248,6 +252,42 @@ export function GanttPlanner() {
     },
     [trackWeekParts]
   );
+
+  const forceSave = useCallback(async () => {
+    setSaveStatus("Kaydediliyor…");
+    const result = await savePlan(plan);
+    if (result.ok) {
+      setSaveStatus(supabaseOn ? "Kaydedildi (veritabanı)" : "Bu cihazda kaydedildi");
+    } else {
+      setSaveStatus(result.message || "Kayıt hatası");
+    }
+  }, [plan, supabaseOn]);
+
+  const wipeEntirePlan = useCallback(async () => {
+    if (
+      !confirm(
+        "Tüm plan verisi (işler, kapasite, öncelik, takip) silinsin mi?\nBu işlem veritabanına da yazılır."
+      )
+    ) {
+      return;
+    }
+    const cleared = clearEntirePlan(plan);
+    setPlan(cleared);
+    setSelected(null);
+    setSelectChain([]);
+    setPasteStatus("");
+    setCapStatus("");
+    saveLocalPlan(cleared);
+    setSaveStatus("Kaydediliyor…");
+    const result = await savePlan(cleared);
+    setSaveStatus(
+      result.ok
+        ? supabaseOn
+          ? "Tüm veri silindi · veritabanı güncellendi"
+          : "Tüm veri silindi · bu cihazda kaydedildi"
+        : result.message || "Silme kaydı başarısız"
+    );
+  }, [plan, supabaseOn]);
 
   const importPaste = (text: string) => {
     const { rows, skipped } = parseExcelText(text);
@@ -492,6 +532,33 @@ export function GanttPlanner() {
 
   return (
     <div className="space-y-6">
+      <div className="no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card)] px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-xs text-[var(--muted)]">
+            {supabaseOn
+              ? "Değişiklikler otomatik olarak Supabase veritabanına kaydedilir."
+              : "Supabase yok · kayıt yalnızca bu tarayıcıda tutulur."}
+          </p>
+          <p className="text-sm text-[var(--foreground)]">{saveStatus}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void forceSave()}
+            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+          >
+            Şimdi kaydet
+          </button>
+          <button
+            type="button"
+            onClick={() => void wipeEntirePlan()}
+            className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-50"
+          >
+            Tüm veriyi sil
+          </button>
+        </div>
+      </div>
+
       <div className="no-print flex flex-wrap gap-1 border-b border-[var(--card-border)]">
         {(
           [
@@ -593,7 +660,6 @@ export function GanttPlanner() {
           <div className="ml-auto flex flex-col gap-1">
             <span className="h-4" aria-hidden />
             <div className="flex h-9 items-center gap-3">
-              <span className="text-sm text-[var(--muted)]">{saveStatus}</span>
               {pdfStatus && <span className="text-sm text-[var(--muted)]">{pdfStatus}</span>}
             </div>
             <span className="h-5" aria-hidden />
@@ -883,6 +949,28 @@ export function GanttPlanner() {
                 className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-sm"
               >
                 Alanı temizle
+              </button>
+              <button
+                type="button"
+                disabled={plan.jobs.length === 0}
+                className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:opacity-40"
+                title="Tüm işleri, öncelik sırasını ve takip kayıtlarını sil (kapasite kalır)"
+                onClick={() => {
+                  if (!plan.jobs.length) return;
+                  if (
+                    !confirm(
+                      `${plan.jobs.length} iş kalemi, öncelik sırası ve takip kayıtları silinsin mi? Kapasite kalır.`
+                    )
+                  )
+                    return;
+                  setPlan(clearAllJobs(plan));
+                  setSelected(null);
+                  setSelectChain([]);
+                  setPasteStatus("Tüm işler silindi.");
+                  setPasteError(false);
+                }}
+              >
+                Tüm işleri sil
               </button>
             </div>
             {pasteStatus && (
@@ -1204,11 +1292,12 @@ export function GanttPlanner() {
                                 </h3>
                                 <button
                                   type="button"
-                                  title="Sıradan çıkar"
+                                  title="İşi kalıcı sil"
                                   className="no-print shrink-0 px-0.5 text-xs leading-none text-[var(--muted)] hover:text-rose-700"
                                   onClick={(ev) => {
                                     ev.stopPropagation();
-                                    setPlan(removeFromSchedule(plan, id));
+                                    if (!confirm(`“${job.name}” silinsin mi?`)) return;
+                                    setPlan(deleteJob(plan, id));
                                     setSelectChain((c) => c.filter((x) => x !== id));
                                     if (selected === id) setSelected(null);
                                   }}
@@ -1482,6 +1571,32 @@ export function GanttPlanner() {
                   ))}
                 </select>
               </div>
+              <button
+                type="button"
+                disabled={!trackWeekParts || !(plan.jobProgress || []).some(
+                  (p) => p.year === trackWeekParts.year && p.week === trackWeekParts.week
+                )}
+                className="h-9 rounded-lg border border-rose-200 px-3 text-sm text-rose-700 disabled:opacity-40"
+                onClick={() => {
+                  if (!trackWeekParts) return;
+                  if (!confirm(`${trackWeek} haftasının takip kayıtları silinsin mi?`)) return;
+                  setPlan(clearJobProgressForWeek(plan, trackWeekParts.year, trackWeekParts.week));
+                }}
+              >
+                Bu haftayı sil
+              </button>
+              <button
+                type="button"
+                disabled={!(plan.jobProgress || []).length}
+                className="h-9 rounded-lg border border-rose-200 px-3 text-sm text-rose-700 disabled:opacity-40"
+                onClick={() => {
+                  if (!(plan.jobProgress || []).length) return;
+                  if (!confirm("Tüm haftaların takip kayıtları silinsin mi?")) return;
+                  setPlan(clearAllJobProgress(plan));
+                }}
+              >
+                Tüm takibi sil
+              </button>
             </div>
           </div>
 

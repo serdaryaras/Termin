@@ -2,6 +2,7 @@ import {
   BAR_COLORS,
   capacityKey,
   DEFAULT_PROJECT,
+  emptyPlan,
   normalizeRole,
   type Job,
   type Plan,
@@ -211,6 +212,41 @@ export function moveSelectedStageBy(plan: Plan, jobId: string, delta: number): P
 export function deleteJob(plan: Plan, jobId: string): Plan {
   const next = removeFromSchedule(plan, jobId);
   next.jobs = next.jobs.filter((j) => j.id !== jobId);
+  next.jobProgress = (next.jobProgress || []).filter((p) => p.jobId !== jobId);
+  return next;
+}
+
+/** Tüm işler, sıra, bağlar ve takip kayıtlarını siler (kapasite kalır) */
+export function clearAllJobs(plan: Plan): Plan {
+  const next = clonePlan(plan);
+  next.jobs = [];
+  next.stages = [];
+  next.dependencies = [];
+  next.jobProgress = [];
+  return next;
+}
+
+/** Plan içeriğini boşaltır; ad / başlangıç / günlük saat korunur */
+export function clearEntirePlan(plan: Plan): Plan {
+  return {
+    ...emptyPlan(),
+    name: plan.name || emptyPlan().name,
+    startDate: plan.startDate || emptyPlan().startDate,
+    hoursPerDay: plan.hoursPerDay || 8,
+  };
+}
+
+export function clearJobProgressForWeek(plan: Plan, year: number, week: number): Plan {
+  const next = clonePlan(plan);
+  next.jobProgress = (next.jobProgress || []).filter(
+    (p) => !(p.year === year && p.week === week)
+  );
+  return next;
+}
+
+export function clearAllJobProgress(plan: Plan): Plan {
+  const next = clonePlan(plan);
+  next.jobProgress = [];
   return next;
 }
 
