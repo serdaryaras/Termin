@@ -168,7 +168,7 @@ function parseWeekToken(raw: string): { year?: number; week: number } | null {
   const asNum = Number(s);
   if (Number.isFinite(asNum) && asNum >= 2000) {
     const year = Math.floor(asNum);
-    let frac = Math.round((asNum - year) * 100);
+    const frac = Math.round((asNum - year) * 100);
     // 2026.4 → JS 2026.4 → frac 40; 2026.35 → 35
     if (frac >= 1 && frac <= 53) return { year, week: frac };
     // 2026.4 okunurken 2026.40 kaybı: *10 ile gelmiş olabilir
