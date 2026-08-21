@@ -43,7 +43,6 @@ import {
   weekIndexFromPlanStart,
   weekRangeLabel,
   WORK_DAYS_PER_WEEK,
-  yearBands,
 } from "@/lib/schedule";
 import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/supabase";
 import {
@@ -1568,8 +1567,8 @@ export function GanttPlanner() {
       )}
 
       {activeTab === "gantt" && (
-      <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-2">
-        <div className="no-print mb-2 flex flex-wrap items-center justify-between gap-2">
+      <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-1.5">
+        <div className="no-print mb-1 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Gantt</h2>
             <select
@@ -1628,7 +1627,7 @@ export function GanttPlanner() {
           </p>
         ) : (
           <div className="max-h-[calc(100vh-5.5rem)] overflow-auto">
-            <div ref={ganttExportRef} className="inline-block min-w-full bg-white p-1 text-slate-900">
+            <div ref={ganttExportRef} className="inline-block min-w-full bg-white text-slate-900">
               {pdfCompact && (
                 <div className="mb-3 flex items-center gap-3 border-b border-slate-200 pb-3">
                   {/* next/image PDF yakalamada sorun çıkarabilir — düz img */}
@@ -1848,7 +1847,6 @@ function GanttView({
     () => buildWeekTicks(planStart, model.totalDays),
     [planStart, model.totalDays]
   );
-  const bands = useMemo(() => yearBands(ticks), [ticks]);
   const weekPx = Math.max(28, Math.min(48, Math.floor(900 / Math.max(ticks.length, 1))));
   const nameColPx = 480;
   const hourColPx = compactLabels ? 0 : 52;
@@ -1874,33 +1872,13 @@ function GanttView({
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
         <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-white shadow-[0_1px_0_0_var(--card-border)]">
-        {projectHeading ? (
+        {compactLabels && projectHeading ? (
           <div className="border-b border-[var(--card-border)] bg-white px-2 py-1 text-[11px] font-semibold text-[var(--accent)]">
             {projectHeading}
           </div>
         ) : null}
         <div
-          className="grid items-stretch bg-white font-semibold"
-          style={{ gridTemplateColumns: `${labelCols} 1fr` }}
-        >
-          <div
-            className={`${stickyLabelClass} z-30`}
-            style={{ width: labelsW, minWidth: labelsW }}
-          />
-          <div className="flex">
-            {bands.map((b) => (
-              <div
-                key={b.year}
-                className="border-l border-[var(--card-border)] bg-white px-1 py-1 text-center text-[var(--accent)]"
-                style={{ width: b.count * weekPx, minWidth: b.count * weekPx }}
-              >
-                {b.year}
-              </div>
-            ))}
-          </div>
-        </div>
-        <div
-          className="grid items-center border-t border-[var(--card-border)] bg-white font-semibold"
+          className="grid items-center bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
           <div
@@ -1917,16 +1895,24 @@ function GanttView({
             )}
           </div>
           <div className="flex">
-            {ticks.map((t) => (
-              <div
-                key={t.key}
-                className="border-l border-[var(--card-border)] bg-white px-0.5 py-1 text-center tabular-nums text-[10px]"
-                style={{ width: weekPx, minWidth: weekPx }}
-                title={`${t.year} hafta ${formatWeekOnly(t.week)}`}
-              >
-                {formatWeekOnly(t.week)}
-              </div>
-            ))}
+            {ticks.map((t, i) => {
+              const yearStart = i === 0 || ticks[i - 1]!.year !== t.year;
+              return (
+                <div
+                  key={t.key}
+                  className="border-l border-[var(--card-border)] bg-white px-0.5 py-0.5 text-center tabular-nums"
+                  style={{ width: weekPx, minWidth: weekPx }}
+                  title={`${t.year} hafta ${formatWeekOnly(t.week)}`}
+                >
+                  {yearStart ? (
+                    <div className="text-[9px] leading-none text-[var(--accent)]">{t.year}</div>
+                  ) : (
+                    <div className="h-[9px]" aria-hidden />
+                  )}
+                  <div className="text-[10px] leading-tight">{formatWeekOnly(t.week)}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
         </div>
