@@ -7,7 +7,6 @@ import { exportElementToPdf } from "@/lib/export-pdf";
 import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
   addDependency,
-  addJobToStage,
   buildWeekTicks,
   clearAllJobProgress,
   clearAllJobs,
@@ -31,6 +30,7 @@ import {
   moveJobsByDelta,
   moveJobsDir,
   moveJobsGroupBefore,
+  moveJobsGroupToIndex,
   nextIsoWeek,
   parseIsoDate,
   predecessorsOf,
@@ -130,7 +130,7 @@ export function GanttPlanner() {
     return formatWeekLabel(year, week);
   });
   const loaded = useRef(false);
-  const dragRef = useRef<{ jobId: string } | null>(null);
+  const dragRef = useRef<{ jobIds: string[] } | null>(null);
   const ganttExportRef = useRef<HTMLDivElement | null>(null);
   const supabaseOn = isSupabaseConfigured();
 
@@ -177,7 +177,7 @@ export function GanttPlanner() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab !== "priority") return;
+    if (activeTab !== "priority" && activeTab !== "gantt") return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (
@@ -191,18 +191,29 @@ export function GanttPlanner() {
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setSelected(null);
-        setSelectChain([]);
-        setEditingJobId(null);
+        if (activeTab === "gantt") {
+          setGanttSelectIds([]);
+        } else {
+          setSelected(null);
+          setSelectChain([]);
+          setEditingJobId(null);
+        }
         return;
       }
       const ids =
-        selectChain.length > 0 ? selectChain : selected ? [selected] : [];
+        activeTab === "gantt"
+          ? ganttSelectIds
+          : selectChain.length > 0
+            ? selectChain
+            : selected
+              ? [selected]
+              : [];
       if (!ids.length) return;
 
+      const rowPrefix = activeTab === "gantt" ? "gantt-job" : "priority-job";
       const scrollSel = () => {
         requestAnimationFrame(() => {
-          document.getElementById(`priority-job-${ids[ids.length - 1]}`)?.scrollIntoView({
+          document.getElementById(`${rowPrefix}-${ids[ids.length - 1]}`)?.scrollIntoView({
             behavior: "smooth",
             block: "center",
           });
@@ -231,7 +242,7 @@ export function GanttPlanner() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTab, selectChain, selected]);
+  }, [activeTab, selectChain, selected, ganttSelectIds]);
 
   const gantt = useMemo(() => computeGantt(plan), [plan]);
   const categoryToneMap = useMemo(
@@ -251,6 +262,10 @@ export function GanttPlanner() {
     linkTargetIds.length > 0 && moveJobsByDelta(plan, linkTargetIds, -1) !== plan;
   const canShiftDown =
     linkTargetIds.length > 0 && moveJobsByDelta(plan, linkTargetIds, 1) !== plan;
+  const canGanttShiftUp =
+    ganttSelectIds.length > 0 && moveJobsByDelta(plan, ganttSelectIds, -1) !== plan;
+  const canGanttShiftDown =
+    ganttSelectIds.length > 0 && moveJobsByDelta(plan, ganttSelectIds, 1) !== plan;
   const canClearSelectedLinks = useMemo(() => {
     return linkTargetIds.some(
       (id) => predecessorsOf(plan, id).length > 0 || successorsOf(plan, id).length > 0
@@ -774,37 +789,84 @@ export function GanttPlanner() {
   const shiftSelectedBy = (delta: number) => {
     const ids = linkTargetIds;
     if (!ids.length) return;
-    setPlan(moveJobsByDelta(plan, ids, delta));
+    setPlan((p) => moveJobsByDelta(p, ids, delta));
     scrollPriorityJobIntoView(ids[ids.length - 1]!);
   };
 
   const shiftSelectedDir = (dir: "top" | "bottom" | "up" | "down") => {
     const ids = linkTargetIds;
     if (!ids.length) return;
-    setPlan(moveJobsDir(plan, ids, dir));
+    setPlan((p) => moveJobsDir(p, ids, dir));
     scrollPriorityJobIntoView(ids[ids.length - 1]!);
+  };
+
+  const scrollGanttJobIntoView = (jobId: string) => {
+    requestAnimationFrame(() => {
+      document.getElementById(`gantt-job-${jobId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    });
+  };
+
+  const shiftGanttBy = (delta: number) => {
+    if (!ganttSelectIds.length) return;
+    const ids = [...ganttSelectIds];
+    setPlan((p) => moveJobsByDelta(p, ids, delta));
+    scrollGanttJobIntoView(ids[ids.length - 1]!);
+  };
+
+  const shiftGanttDir = (dir: "top" | "bottom" | "up" | "down") => {
+    if (!ganttSelectIds.length) return;
+    const ids = [...ganttSelectIds];
+    setPlan((p) => moveJobsDir(p, ids, dir));
+    scrollGanttJobIntoView(ids[ids.length - 1]!);
   };
 
   const onDragStart = (jobId: string) => (e: DragEvent) => {
     window.getSelection()?.removeAllRanges();
-    dragRef.current = { jobId };
+    const ids =
+      linkTargetIds.includes(jobId) && linkTargetIds.length > 0
+        ? [...linkTargetIds]
+        : [jobId];
+    dragRef.current = { jobIds: ids };
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", jobId);
+    e.dataTransfer.setData("text/plain", ids.join(","));
   };
 
-  const dropJob = useCallback(
-    (stageIndex: number, asNewStage: boolean) => (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setOverId(null);
-      const jobId = dragRef.current?.jobId || e.dataTransfer.getData("text/plain");
-      dragRef.current = null;
-      if (!jobId || !jobById(plan, jobId)) return;
-      setPlan((p) => addJobToStage(p, jobId, stageIndex, asNewStage));
-      setSelected(jobId);
-    },
-    [plan]
-  );
+  const readDragJobIds = (e: DragEvent): string[] => {
+    const fromRef = dragRef.current?.jobIds;
+    dragRef.current = null;
+    if (fromRef?.length) return fromRef;
+    return e.dataTransfer
+      .getData("text/plain")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  const dropJobsBefore = (targetJobId: string) => (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOverId(null);
+    const ids = readDragJobIds(e).filter((id) => jobById(plan, id));
+    if (!ids.length || ids.includes(targetJobId)) return;
+    setPlan((p) => moveJobsGroupBefore(p, ids, targetJobId));
+    setSelectChain(ids);
+    setSelected(ids[ids.length - 1]!);
+  };
+
+  const dropJobsAtIndex = (index: number) => (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOverId(null);
+    const ids = readDragJobIds(e).filter((id) => jobById(plan, id));
+    if (!ids.length) return;
+    setPlan((p) => moveJobsGroupToIndex(p, ids, index));
+    setSelectChain(ids);
+    setSelected(ids[ids.length - 1]!);
+  };
 
   const allowDrop = (id: string) => (e: DragEvent) => {
     e.preventDefault();
@@ -1658,7 +1720,7 @@ export function GanttPlanner() {
                 }`}
                 onDragOver={allowDrop("start-top")}
                 onDragLeave={() => setOverId(null)}
-                onDrop={dropJob(0, true)}
+                onDrop={dropJobsAtIndex(0)}
               >
                 Başa bırak
               </div>
@@ -1670,7 +1732,7 @@ export function GanttPlanner() {
                 }`}
                 onDragOver={allowDrop("end-top")}
                 onDragLeave={() => setOverId(null)}
-                onDrop={dropJob(plan.stages.length, true)}
+                onDrop={dropJobsAtIndex(Number.MAX_SAFE_INTEGER)}
               >
                 Sona bırak
               </div>
@@ -1721,7 +1783,7 @@ export function GanttPlanner() {
                             onDragStart={isEditing ? undefined : onDragStart(id)}
                             onDragOver={allowDrop(`st-${si}`)}
                             onDragLeave={() => setOverId(null)}
-                            onDrop={dropJob(si, true)}
+                            onDrop={dropJobsBefore(id)}
                             style={{
                               background: isSelected
                                 ? "color-mix(in srgb, var(--accent) 28%, white)"
@@ -1739,7 +1801,7 @@ export function GanttPlanner() {
                                     ? "cursor-grab select-none"
                                     : "cursor-grab select-none hover:brightness-[0.99]"
                             } ${overId === `st-${si}` ? "drop-over" : ""}`}
-                            title={`${job.name} · tıkla: seç · CTRL: öncül→ardıl · ↑/↓: kaydır · Shift+↑/↓: üste/alta · PgUp/PgDn: ±20 · Shift+tık: düzenle`}
+                            title={`${job.name} · tıkla: seç · CTRL: öncül→ardıl · ↑/↓ · Shift+↑/↓ · PgUp/PgDn · Esc · sürükle: grubu seçim sırasıyla taşı · Shift+tık: düzenle`}
                           >
                             {isEditing ? (
                               <div
@@ -1870,7 +1932,7 @@ export function GanttPlanner() {
                 className={`mt-0.5 h-1 rounded ${overId === "ins-end" ? "drop-over h-3" : ""}`}
                 onDragOver={allowDrop("ins-end")}
                 onDragLeave={() => setOverId(null)}
-                onDrop={dropJob(plan.stages.length, true)}
+                onDrop={dropJobsAtIndex(Number.MAX_SAFE_INTEGER)}
               />
             )}
           </div>
@@ -1884,7 +1946,7 @@ export function GanttPlanner() {
               }`}
               onDragOver={allowDrop("start-bottom")}
               onDragLeave={() => setOverId(null)}
-              onDrop={dropJob(0, true)}
+              onDrop={dropJobsAtIndex(0)}
             >
               Başa bırak
             </div>
@@ -1896,7 +1958,7 @@ export function GanttPlanner() {
               }`}
               onDragOver={allowDrop("end-bottom")}
               onDragLeave={() => setOverId(null)}
-              onDrop={dropJob(plan.stages.length, true)}
+              onDrop={dropJobsAtIndex(Number.MAX_SAFE_INTEGER)}
             >
               Sona bırak
             </div>
@@ -1929,8 +1991,67 @@ export function GanttPlanner() {
               </p>
             )}
             <span className="hidden text-[10px] text-[var(--muted)] lg:inline">
-              Tıkla = seç · sürükle = grubu taşı
+              Tıkla = seç · ↑/↓ · Shift+↑/↓ · PgUp/PgDn · Esc · sürükle (seçim sırası)
             </span>
+            <div className="flex flex-nowrap items-center gap-0.5 overflow-x-auto">
+              {(
+                [
+                  ["Üst", () => shiftGanttDir("top"), !ganttSelectIds.length],
+                  ["↑", () => shiftGanttDir("up"), !canGanttShiftUp],
+                  ["↓", () => shiftGanttDir("down"), !canGanttShiftDown],
+                  ["Alt", () => shiftGanttDir("bottom"), !ganttSelectIds.length],
+                ] as [string, () => void, boolean][]
+              ).map(([label, fn, disabled]) => (
+                <button
+                  key={`gantt-shift-${label}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={fn}
+                  title={
+                    label === "Üst"
+                      ? "Shift+↑ · en üste"
+                      : label === "Alt"
+                        ? "Shift+↓ · en alta"
+                        : label === "↑"
+                          ? "↑ · bir sıra yukarı"
+                          : "↓ · bir sıra aşağı"
+                  }
+                  className="h-7 w-9 shrink-0 rounded border border-[var(--card-border)] text-[10px] disabled:opacity-40"
+                >
+                  {label}
+                </button>
+              ))}
+              {([-20, -10, -1, 1, 10, 20] as const).map((delta) => {
+                const disabled =
+                  !ganttSelectIds.length ||
+                  (delta < 0 && !canGanttShiftUp) ||
+                  (delta > 0 && !canGanttShiftDown);
+                return (
+                  <button
+                    key={`gantt-delta-${delta}`}
+                    type="button"
+                    disabled={disabled}
+                    title={
+                      delta === -20
+                        ? "Page Up · 20 sıra yukarı"
+                        : delta === 20
+                          ? "Page Down · 20 sıra aşağı"
+                          : delta > 0
+                            ? `Seçili iş(ler)i ${delta} sıra aşağı`
+                            : `Seçili iş(ler)i ${Math.abs(delta)} sıra yukarı`
+                    }
+                    onClick={() => shiftGanttBy(delta)}
+                    className={`h-7 w-9 shrink-0 rounded text-[10px] font-semibold tabular-nums disabled:opacity-40 ${
+                      delta > 0
+                        ? "bg-amber-100 text-amber-900"
+                        : "bg-sky-100 text-sky-900"
+                    }`}
+                  >
+                    {delta > 0 ? `+${delta}` : delta}
+                  </button>
+                );
+              })}
+            </div>
             <label
               className="flex items-center gap-1 rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]"
               title="Seçili aktivitenin aşamasından sonra N iş günü boşluk; sonraki aktiviteler ötelenir"
@@ -1961,6 +2082,7 @@ export function GanttPlanner() {
                 type="button"
                 className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px]"
                 onClick={() => setGanttSelectIds([])}
+                title="Esc"
               >
                 Seçimi temizle ({ganttSelectIds.length})
               </button>
@@ -2330,6 +2452,8 @@ function GanttView({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const dragIdsRef = useRef<string[]>([]);
   const suppressClickRef = useRef(false);
+  const dragMovedRef = useRef(false);
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const sections = useMemo(() => {
     if (!groupByProject) return [{ project: "", rows: model.rows }];
@@ -2426,7 +2550,8 @@ function GanttView({
             {section.rows.map((r) => {
               const left = weekIndexFromPlanStart(planStart, r.startDay) * weekPx;
               const width = Math.max(12, (r.durationDays / WORK_DAYS_PER_WEEK) * weekPx);
-              const isSelected = selectedSet.has(r.job.id);
+              const selOrd = selectedIds.indexOf(r.job.id);
+              const isSelected = selOrd >= 0;
               const isDropTarget = dropTargetId === r.job.id;
               return (
                 <div
@@ -2437,20 +2562,24 @@ function GanttView({
                   style={{ gridTemplateColumns: `${labelCols} 1fr` }}
                 >
                   <div
+                    id={`gantt-job-${r.job.id}`}
                     className={`${stickyLabelClass} ${interactive ? "cursor-pointer" : ""} ${
-                      isSelected ? "ring-1 ring-inset ring-[var(--accent)]" : ""
+                      isSelected ? "ring-2 ring-inset ring-[var(--accent)]" : ""
                     }`}
                     style={{
                       width: labelsW,
                       minWidth: labelsW,
                       background: isSelected
-                        ? "color-mix(in srgb, var(--accent) 14%, white)"
+                        ? "color-mix(in srgb, var(--accent) 28%, white)"
                         : r.tint || "#fff",
+                      boxShadow: isSelected
+                        ? "inset 3px 0 0 0 var(--accent)"
+                        : undefined,
                     }}
                     draggable={interactive}
                     title={
                       interactive
-                        ? `${r.job.name} · tıkla: seç/kaldır · sürükle: grubu taşı`
+                        ? `${r.job.name} · tıkla: seç · ↑/↓ · Shift+↑/↓ · PgUp/PgDn · Esc · sürükle: grubu seçim sırasıyla taşı`
                         : `${r.job.name} · ${r.job.role} · ${r.job.people} kişi`
                     }
                     onClick={(e) => {
@@ -2464,7 +2593,10 @@ function GanttView({
                     }}
                     onDragStart={(e) => {
                       if (!interactive) return;
-                      suppressClickRef.current = true;
+                      // Tıklamada sürükleme başlamasın diye suppress'i burada kurma;
+                      // gerçek sürüklemede dragEnd/drop sonrası click yutulur.
+                      dragMovedRef.current = false;
+                      dragStartPosRef.current = { x: e.clientX, y: e.clientY };
                       const ids =
                         selectedSet.has(r.job.id) && selectedIds.length > 0
                           ? [...selectedIds]
@@ -2473,9 +2605,22 @@ function GanttView({
                       e.dataTransfer.effectAllowed = "move";
                       e.dataTransfer.setData("text/plain", ids.join(","));
                     }}
+                    onDrag={(e) => {
+                      const p = dragStartPosRef.current;
+                      if (!p || (e.clientX === 0 && e.clientY === 0)) return;
+                      if (
+                        Math.abs(e.clientX - p.x) > 4 ||
+                        Math.abs(e.clientY - p.y) > 4
+                      ) {
+                        dragMovedRef.current = true;
+                      }
+                    }}
                     onDragEnd={() => {
                       dragIdsRef.current = [];
                       setDropTargetId(null);
+                      if (dragMovedRef.current) suppressClickRef.current = true;
+                      dragMovedRef.current = false;
+                      dragStartPosRef.current = null;
                     }}
                     onDragOver={(e) => {
                       if (!interactive) return;
@@ -2500,15 +2645,19 @@ function GanttView({
                     }}
                   >
                     <div
-                      className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]"
+                      className="flex min-w-0 items-center gap-1 overflow-hidden px-2 py-0.5 text-[11px]"
                       style={{ width: nameColPx, minWidth: nameColPx }}
                     >
-                      {isSelected && selectedIds.length > 1 ? (
-                        <span className="mr-1 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[8px] font-bold text-white">
-                          {selectedIds.indexOf(r.job.id) + 1}
+                      {isSelected ? (
+                        <span className="inline-flex h-4 min-w-4 flex-none items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-bold leading-none text-white shadow-sm">
+                          {selOrd + 1}
                         </span>
                       ) : null}
-                      {r.job.name}
+                      <span
+                        className={`min-w-0 flex-1 truncate ${isSelected ? "font-semibold" : ""}`}
+                      >
+                        {r.job.name}
+                      </span>
                     </div>
                     {!compactLabels && (
                       <div
@@ -2557,7 +2706,8 @@ function GanttView({
           </span>
         ))}
         <span>
-          Haftalık kişi = paralel akış. Sol isim: tıkla seç, sürükle bırak ile grubu taşı.
+          Haftalık kişi = paralel akış. Sol isim: tıkla seç · ↑/↓ · Shift+↑/↓ · PgUp/PgDn · Esc ·
+          sürükle bırak (seçim sırasıyla toplu taşı).
         </span>
         {groupByProject && <span>Satırlar projelere göre gruplandı</span>}
       </div>
