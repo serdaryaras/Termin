@@ -26,6 +26,7 @@ import {
   formatWeekOnly,
   ganttRowOverlapsIsoWeek,
   getIsoWeekParts,
+  getWeeklyCapacityPeople,
   jobById,
   moveJobsByDelta,
   moveJobsDir,
@@ -251,7 +252,7 @@ export function GanttPlanner() {
   }, [plan, prioritySearch, projectFilter, gantt.rows]);
 
   const sortedCapacities = useMemo(() => {
-    return [...plan.weeklyCapacities].sort((a, b) => {
+    const list = [...plan.weeklyCapacities].sort((a, b) => {
       const pc = a.project.localeCompare(b.project, "tr");
       if (pc !== 0) return pc;
       const rc = a.role.localeCompare(b.role, "tr");
@@ -259,7 +260,9 @@ export function GanttPlanner() {
       if (a.year !== b.year) return a.year - b.year;
       return a.week - b.week;
     });
-  }, [plan.weeklyCapacities]);
+    if (projectFilter === "all") return list;
+    return list.filter((c) => (c.project || DEFAULT_PROJECT) === projectFilter);
+  }, [plan.weeklyCapacities, projectFilter]);
 
   const capacityProjects = useMemo(() => {
     const set = new Set<string>();
@@ -278,6 +281,10 @@ export function GanttPlanner() {
       setCapDeleteProject(capacityProjects[0]!);
     }
   }, [capacityProjects, capDeleteProject]);
+
+  useEffect(() => {
+    if (projectFilter !== "all") setCapProject(projectFilter);
+  }, [projectFilter]);
 
   const trackWeekParts = useMemo(() => parseTrackWeekLabel(trackWeek), [trackWeek]);
 
@@ -818,7 +825,11 @@ export function GanttPlanner() {
         <section className="section-card section-card--tone-0 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
           <div className="section-card__header flex items-baseline justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wider">
             <span>Kapasite</span>
-            <span className="normal-case tracking-normal text-[var(--muted)]">proje · hafta · tip · kişi</span>
+            <span className="normal-case tracking-normal text-[var(--muted)]">
+              {projectFilter !== "all"
+                ? `${sortedCapacities.length}/${plan.weeklyCapacities.length} · ${projectFilter}`
+                : `${plan.weeklyCapacities.length} kayıt · proje · hafta · tip · kişi`}
+            </span>
           </div>
 
           <div className="no-print space-y-3 p-4">
@@ -980,7 +991,7 @@ export function GanttPlanner() {
               </button>
             </div>
 
-            {sortedCapacities.length > 0 && (
+            {sortedCapacities.length > 0 ? (
               <div className="max-h-[min(70vh,36rem)] space-y-2 overflow-auto">
                 {sortedCapacities.map((c) => (
                   <div
@@ -1090,11 +1101,15 @@ export function GanttPlanner() {
                   </div>
                 ))}
               </div>
-            )}
+            ) : plan.weeklyCapacities.length > 0 && projectFilter !== "all" ? (
+              <p className="text-xs text-[var(--muted)]">
+                “{projectFilter}” için kapasite kaydı yok. Üstteki proje filtresini değiştirin veya kayıt ekleyin.
+              </p>
+            ) : null}
             <p className="text-[11px] text-[var(--muted)]">
               Excel: <strong>proje adı</strong> · <strong>hafta</strong> · <strong>personel tipi</strong> ·{" "}
               <strong>kişi</strong>. Örn. Donatım=3 → aynı haftada 3 paralel akış (işlerdeki kişi genelde 1).
-              Plan başlangıcı kapasite haftalarıyla uyumlu olmalı.
+              Plan başlangıcı kapasite haftalarıyla uyumlu olmalı. Liste üstteki <strong>proje filtresi</strong>ne göre daralır.
             </p>
           </div>
         </section>
@@ -1338,7 +1353,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="h-8 w-9 shrink-0 rounded border border-[var(--card-border)] text-xs disabled:opacity-40"
+                    className="h-8 w-[4.5rem] shrink-0 rounded border border-[var(--card-border)] text-xs disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1359,7 +1374,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`h-8 w-9 shrink-0 rounded text-xs font-semibold tabular-nums disabled:opacity-40 ${
+                      className={`h-8 w-[4.5rem] shrink-0 rounded text-xs font-semibold tabular-nums disabled:opacity-40 ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
@@ -1940,7 +1955,7 @@ export function GanttPlanner() {
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider">Haftalık takip</h2>
               <p className="mt-1 text-xs text-[var(--muted)]">
-                İlerleme düğmesine tıklayın: %100 → %75 → %50 → %25 → %0. Takılan işlere neden yazın.
+                İlerleme: %100 → %75 → %50 → %25 → %0. Kişi ve hf kapasiteyi bu hafta için burada değiştirin; Gantt yenilenir.
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-3">
@@ -2031,6 +2046,8 @@ export function GanttPlanner() {
                     <th className="px-2 py-2 font-medium">Aktivite</th>
                     <th className="px-2 py-2 font-medium">Proje</th>
                     <th className="px-2 py-2 font-medium">Rol</th>
+                    <th className="px-2 py-2 font-medium">Kişi</th>
+                    <th className="px-2 py-2 font-medium">Hf kapasite</th>
                     <th className="px-2 py-2 font-medium">Saat / süre</th>
                     <th className="px-2 py-2 font-medium">İlerleme</th>
                     <th className="px-2 py-2 font-medium">Takılma / neden</th>
@@ -2047,6 +2064,24 @@ export function GanttPlanner() {
                         p.week === trackWeekParts.week
                     );
                     const hpd = plan.hoursPerDay || 8;
+                    const weekCap = getWeeklyCapacityPeople(
+                      plan,
+                      job.project || DEFAULT_PROJECT,
+                      trackWeekParts.year,
+                      trackWeekParts.week,
+                      job.role
+                    );
+                    const setWeekCap = (people: number) => {
+                      setPlan(
+                        upsertWeeklyCapacity(plan, {
+                          project: job.project || DEFAULT_PROJECT,
+                          year: trackWeekParts.year,
+                          week: trackWeekParts.week,
+                          role: job.role,
+                          people: Math.max(0, Math.round(people)),
+                        })
+                      );
+                    };
                     return (
                       <tr
                         key={`${jobId}-${trackWeekParts.year}-${trackWeekParts.week}`}
@@ -2059,6 +2094,69 @@ export function GanttPlanner() {
                         <td className="px-2 py-2 font-medium leading-snug">{job.name}</td>
                         <td className="px-2 py-2 text-[var(--muted)]">{job.project}</td>
                         <td className="px-2 py-2 text-[var(--muted)]">{job.role}</td>
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              title="Kişi −1"
+                              onClick={() => patchJob(jobId, { people: job.people - 1 })}
+                              className="rounded border border-[var(--card-border)] px-1.5 py-1 text-[10px] font-medium"
+                            >
+                              −
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={job.people}
+                              title="İşe atanan kişi (tüm süre boyunca)"
+                              onChange={(e) => patchJob(jobId, { people: Number(e.target.value) })}
+                              className="w-12 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-1 text-center text-xs tabular-nums"
+                            />
+                            <button
+                              type="button"
+                              title="Kişi +1"
+                              onClick={() => patchJob(jobId, { people: job.people + 1 })}
+                              className="rounded border border-[var(--card-border)] px-1.5 py-1 text-[10px] font-medium"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              title="Bu haftanın proje×rol kapasitesini −1"
+                              onClick={() => setWeekCap((weekCap ?? 0) - 1)}
+                              className="rounded border border-[var(--card-border)] px-1.5 py-1 text-[10px] font-medium"
+                            >
+                              −
+                            </button>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={weekCap ?? ""}
+                              placeholder="—"
+                              title="Bu hafta proje × rol kullanılabilir kişi. Değişince Gantt yeniden yerleşir."
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") return;
+                                setWeekCap(Number(v));
+                              }}
+                              className="w-12 rounded-lg border border-amber-200 bg-amber-50/60 px-1.5 py-1 text-center text-xs tabular-nums text-amber-950"
+                            />
+                            <button
+                              type="button"
+                              title="Bu haftanın proje×rol kapasitesini +1"
+                              onClick={() => setWeekCap((weekCap ?? 0) + 1)}
+                              className="rounded border border-amber-200 bg-amber-50 px-1.5 py-1 text-[10px] font-medium text-amber-900"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-2 py-2">
                           <div className="flex flex-wrap items-center gap-1">
                             <input

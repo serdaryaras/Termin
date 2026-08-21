@@ -407,6 +407,26 @@ export function upsertWeeklyCapacity(
   return next;
 }
 
+/** Proje × hafta × rol için tanımlı kapasite (yoksa null) */
+export function getWeeklyCapacityPeople(
+  plan: Plan,
+  project: string,
+  year: number,
+  week: number,
+  role: string
+): number | null {
+  const key = capacityKey(project, year, week, normalizeRole(role));
+  let sum = 0;
+  let found = false;
+  for (const c of plan.weeklyCapacities) {
+    if (capacityKey(c.project, c.year, c.week, normalizeRole(c.role)) === key) {
+      sum += Number(c.people) || 0;
+      found = true;
+    }
+  }
+  return found ? sum : null;
+}
+
 /** Kimlik (proje/hafta/tip) değişince eski kaydı silip yenisini yazar */
 export function replaceWeeklyCapacity(
   plan: Plan,
