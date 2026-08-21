@@ -199,35 +199,42 @@ export function GanttPlanner() {
     };
   }, [gantt, projectFilter]);
 
-  /** Öncelik grid’i: arama yalnızca görünümü daraltır; si gerçek sıra indeksidir (kaydırma / bağ aynı kalır) */
+  /** Öncelik grid’i: proje + arama görünümü daraltır; si gerçek sıra indeksidir */
   const filteredPriorityStages = useMemo(() => {
     const q = prioritySearch.trim().toLocaleLowerCase("tr");
     const out: { si: number; jobIds: string[] }[] = [];
     plan.stages.forEach((stage, si) => {
-      if (!q) {
-        out.push({ si, jobIds: stage.jobIds });
-        return;
-      }
-      const jobIds = stage.jobIds.filter((id) => {
+      let jobIds = stage.jobIds.filter((id) => {
         const job = jobById(plan, id);
         if (!job) return false;
-        const week = stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || "";
-        const hay = [
-          job.name,
-          job.role,
-          job.project || "",
-          `A${si + 1}`,
-          week,
-          formatHours(job.hours),
-        ]
-          .join(" ")
-          .toLocaleLowerCase("tr");
-        return hay.includes(q);
+        if (projectFilter !== "all" && (job.project || DEFAULT_PROJECT) !== projectFilter) {
+          return false;
+        }
+        return true;
       });
+      if (!jobIds.length) return;
+      if (q) {
+        jobIds = jobIds.filter((id) => {
+          const job = jobById(plan, id);
+          if (!job) return false;
+          const week = stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || "";
+          const hay = [
+            job.name,
+            job.role,
+            job.project || "",
+            `A${si + 1}`,
+            week,
+            formatHours(job.hours),
+          ]
+            .join(" ")
+            .toLocaleLowerCase("tr");
+          return hay.includes(q);
+        });
+      }
       if (jobIds.length) out.push({ si, jobIds });
     });
     return out;
-  }, [plan, prioritySearch, gantt.rows]);
+  }, [plan, prioritySearch, projectFilter, gantt.rows]);
 
   const sortedCapacities = useMemo(() => {
     return [...plan.weeklyCapacities].sort((a, b) => {
@@ -1158,8 +1165,21 @@ export function GanttPlanner() {
             <div className="flex flex-wrap items-center gap-1.5 px-2 py-1">
               <div className="flex shrink-0 items-center gap-1.5">
                 <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Öncelik</h2>
+                <select
+                  value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}
+                  className="h-7 max-w-[14rem] rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 text-[11px] text-[var(--foreground)]"
+                  title="İşlem yapılan proje"
+                >
+                  <option value="all">Tüm projeler</option>
+                  {projects.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
                 <span className="text-[10px] tabular-nums text-[var(--muted)]">
-                  {prioritySearch.trim()
+                  {projectFilter !== "all" || prioritySearch.trim()
                     ? `${filteredPriorityStages.length}/${plan.stages.length}`
                     : plan.stages.length}{" "}
                   aşama
@@ -1174,10 +1194,10 @@ export function GanttPlanner() {
                 value={prioritySearch}
                 onChange={(e) => setPrioritySearch(e.target.value)}
                 placeholder="Aktivite ara…"
-                className="min-w-[10rem] flex-1 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
+                className="w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
                 title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
               />
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
                 {(
                   [
                     ["Üst", () => shiftSelectedDir("top"), !place],
@@ -1196,7 +1216,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                    className="rounded border border-[var(--card-border)] px-2.5 py-1 text-[11px] disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1217,7 +1237,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`min-w-[1.75rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums disabled:opacity-40 ${
+                      className={`min-w-[2.25rem] rounded px-2 py-1 text-[11px] font-semibold tabular-nums disabled:opacity-40 ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
@@ -1307,7 +1327,9 @@ export function GanttPlanner() {
               </p>
             ) : filteredPriorityStages.length === 0 ? (
               <p className="py-4 text-center text-xs text-[var(--muted)]">
-                Aramaya uyan aktivite yok.
+                {projectFilter !== "all"
+                  ? `“${projectFilter}” için görünen aşama yok.`
+                  : "Aramaya uyan aktivite yok."}
               </p>
             ) : (
               <div
@@ -1550,9 +1572,21 @@ export function GanttPlanner() {
         <div className="no-print mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Gantt</h2>
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="h-7 max-w-[14rem] rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 text-[11px] text-[var(--foreground)]"
+              title="İşlem yapılan proje"
+            >
+              <option value="all">Tüm projeler</option>
+              {projects.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
             {filteredGantt.rows.length > 0 && (
               <p className="truncate text-[11px] text-[var(--muted)]">
-                {projectFilter !== "all" ? `${projectFilter} · ` : ""}
                 {filteredGantt.rows.length} satır · {formatHours(gantt.totalHours)} ·{" "}
                 {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf
               </p>
@@ -1588,7 +1622,9 @@ export function GanttPlanner() {
         )}
         {filteredGantt.rows.length === 0 ? (
           <p className="py-8 text-sm text-[var(--muted)]">
-            Sıralama oluştukça çizelge burada üretilir. Zaman ekseni proje başlangıç haftasından başlar.
+            {projectFilter !== "all"
+              ? `“${projectFilter}” için Gantt satırı yok. Başka proje seçin veya sıralamayı kontrol edin.`
+              : "Sıralama oluştukça çizelge burada üretilir. Zaman ekseni proje başlangıç haftasından başlar."}
           </p>
         ) : (
           <div className="max-h-[calc(100vh-5.5rem)] overflow-auto">
@@ -1803,7 +1839,7 @@ function GanttView({
   planStart: string;
   model: ReturnType<typeof computeGantt>;
   groupByProject: boolean;
-  /** PDF: Personel / Saat kolonlarını gizle */
+  /** PDF: Saat kolonunu da gizle */
   compactLabels?: boolean;
   /** Proje adı başlıkta (satırda tekrarlanmaz) */
   projectHeading?: string;
@@ -1814,8 +1850,10 @@ function GanttView({
   );
   const bands = useMemo(() => yearBands(ticks), [ticks]);
   const weekPx = Math.max(28, Math.min(48, Math.floor(900 / Math.max(ticks.length, 1))));
-  const labelCols = compactLabels ? "380px" : "380px 108px 48px";
-  const labelSpan = compactLabels ? 1 : 3;
+  const nameColPx = 480;
+  const hourColPx = compactLabels ? 0 : 52;
+  const labelsW = nameColPx + hourColPx;
+  const labelCols = `${labelsW}px`;
 
   const sections = useMemo(() => {
     if (!groupByProject) return [{ project: "", rows: model.rows }];
@@ -1830,6 +1868,9 @@ function GanttView({
       .map(([project, rows]) => ({ project, rows }));
   }, [model.rows, groupByProject]);
 
+  const stickyLabelClass =
+    "sticky left-0 z-10 flex shrink-0 items-center border-r border-[var(--card-border)] bg-white shadow-[3px_0_6px_-3px_rgba(15,23,42,0.18)]";
+
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
         <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-white shadow-[0_1px_0_0_var(--card-border)]">
@@ -1842,7 +1883,10 @@ function GanttView({
           className="grid items-stretch bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
-          <div style={{ gridColumn: `span ${labelSpan}` }} />
+          <div
+            className={`${stickyLabelClass} z-30`}
+            style={{ width: labelsW, minWidth: labelsW }}
+          />
           <div className="flex">
             {bands.map((b) => (
               <div
@@ -1859,13 +1903,19 @@ function GanttView({
           className="grid items-center border-t border-[var(--card-border)] bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
-          <div className="bg-white px-2 py-1">İş kalemi</div>
-          {!compactLabels && (
-            <>
-              <div className="bg-white px-2 py-1">Personel</div>
-              <div className="bg-white px-2 py-1">Saat</div>
-            </>
-          )}
+          <div
+            className={`${stickyLabelClass} z-30`}
+            style={{ width: labelsW, minWidth: labelsW }}
+          >
+            <div className="px-2 py-1" style={{ width: nameColPx, minWidth: nameColPx }}>
+              İş kalemi
+            </div>
+            {!compactLabels && (
+              <div className="px-2 py-1" style={{ width: hourColPx, minWidth: hourColPx }}>
+                Saat
+              </div>
+            )}
+          </div>
           <div className="flex">
             {ticks.map((t) => (
               <div
@@ -1883,7 +1933,7 @@ function GanttView({
         {sections.map((section) => (
           <div key={section.project || "all"}>
             {groupByProject && section.project && (
-              <div className="border-b border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
+              <div className="sticky left-0 z-[5] border-b border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
                 {section.project}
                 <span className="ml-2 font-normal normal-case tracking-normal text-[var(--muted)]">
                   {section.rows.length} aktivite
@@ -1899,17 +1949,26 @@ function GanttView({
                   className="grid items-center border-b border-[var(--card-border)]"
                   style={{ gridTemplateColumns: `${labelCols} 1fr` }}
                 >
-                  <div className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]" title={r.job.name}>
-                    {r.job.name}
-                  </div>
-                  {!compactLabels && (
-                    <>
-                      <div className="truncate px-2 py-0.5 text-[10px] text-[var(--muted)]" title={`${r.job.role} · ${r.job.people} kişi`}>
-                        {r.job.role} · {r.job.people}
+                  <div
+                    className={stickyLabelClass}
+                    style={{ width: labelsW, minWidth: labelsW }}
+                  >
+                    <div
+                      className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]"
+                      style={{ width: nameColPx, minWidth: nameColPx }}
+                      title={`${r.job.name} · ${r.job.role} · ${r.job.people} kişi`}
+                    >
+                      {r.job.name}
+                    </div>
+                    {!compactLabels && (
+                      <div
+                        className="px-2 py-0.5 text-[10px] tabular-nums"
+                        style={{ width: hourColPx, minWidth: hourColPx }}
+                      >
+                        {formatHours(r.job.hours)}
                       </div>
-                      <div className="px-2 py-0.5 text-[10px] tabular-nums">{formatHours(r.job.hours)}</div>
-                    </>
-                  )}
+                    )}
+                  </div>
                   <div
                     className="relative h-6"
                     style={{
@@ -1926,7 +1985,7 @@ function GanttView({
                         width,
                         background: r.color,
                       }}
-                      title={`A${r.stage} · Hat ${r.lane} · ${r.durationDays.toFixed(1)} iş günü · ${(r.durationDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf · ${r.job.project || DEFAULT_PROJECT}`}
+                      title={`A${r.stage} · Hat ${r.lane} · ${r.job.role} · ${r.job.people} kişi · ${r.durationDays.toFixed(1)} iş günü · ${(r.durationDays / WORK_DAYS_PER_WEEK).toFixed(1)} hf · ${r.job.project || DEFAULT_PROJECT}`}
                     >
                       H{r.lane}
                     </div>
