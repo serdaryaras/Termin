@@ -23,12 +23,15 @@ import {
   formatHours,
   formatWeekLabel,
   formatWeekOnly,
+  ganttRowOverlapsIsoWeek,
   getIsoWeekParts,
   jobById,
   moveSelectedStage,
   moveSelectedStageBy,
+  nextIsoWeek,
   parseIsoDate,
   predecessorsOf,
+  prevIsoWeek,
   removeDependency,
   removeWeeklyCapacity,
   replaceWeeklyCapacity,
@@ -201,9 +204,23 @@ export function GanttPlanner() {
 
   const trackRows = useMemo(() => {
     const rows: { jobId: string; stageIndex: number; seq: number }[] = [];
+    if (!trackWeekParts) return rows;
+    const inWeek = new Set(
+      gantt.rows
+        .filter((r) =>
+          ganttRowOverlapsIsoWeek(
+            r,
+            plan.startDate,
+            trackWeekParts.year,
+            trackWeekParts.week
+          )
+        )
+        .map((r) => r.job.id)
+    );
     let seq = 0;
     plan.stages.forEach((stage, stageIndex) => {
       for (const jobId of stage.jobIds) {
+        if (!inWeek.has(jobId)) continue;
         const job = jobById(plan, jobId);
         if (!job) continue;
         if (projectFilter !== "all" && (job.project || DEFAULT_PROJECT) !== projectFilter) continue;
@@ -212,7 +229,17 @@ export function GanttPlanner() {
       }
     });
     return rows;
-  }, [plan, projectFilter]);
+  }, [plan, projectFilter, gantt.rows, trackWeekParts]);
+
+  const shiftTrackWeek = useCallback((delta: -1 | 1) => {
+    const base =
+      parseTrackWeekLabel(trackWeek) || getIsoWeekParts(new Date());
+    const next =
+      delta > 0
+        ? nextIsoWeek(base.year, base.week)
+        : prevIsoWeek(base.year, base.week);
+    setTrackWeek(formatWeekLabel(next.year, next.week));
+  }, [trackWeek]);
 
   const cycleTrackProgress = useCallback(
     (jobId: string) => {
@@ -1550,13 +1577,31 @@ export function GanttPlanner() {
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-[var(--muted)]">Takip haftası</span>
-                <input
-                  type="text"
-                  value={trackWeek}
-                  onChange={(e) => setTrackWeek(e.target.value)}
-                  placeholder="2026-35"
-                  className="h-9 w-32 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm tabular-nums"
-                />
+                <div className="flex h-9 items-center gap-1">
+                  <button
+                    type="button"
+                    title="Önceki hafta"
+                    onClick={() => shiftTrackWeek(-1)}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--card-border)] text-sm hover:bg-[var(--background)]"
+                  >
+                    ←
+                  </button>
+                  <input
+                    type="text"
+                    value={trackWeek}
+                    onChange={(e) => setTrackWeek(e.target.value)}
+                    placeholder="2026-35"
+                    className="h-9 w-28 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 text-center text-sm tabular-nums"
+                  />
+                  <button
+                    type="button"
+                    title="Sonraki hafta"
+                    onClick={() => shiftTrackWeek(1)}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--card-border)] text-sm hover:bg-[var(--background)]"
+                  >
+                    →
+                  </button>
+                </div>
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-[var(--muted)]">Proje</span>
@@ -1606,7 +1651,7 @@ export function GanttPlanner() {
             <p className="py-6 text-sm text-rose-700">Hafta biçimi geçersiz. Örnek: 2026-35</p>
           ) : trackRows.length === 0 ? (
             <p className="py-8 text-sm text-[var(--muted)]">
-              Öncelik sırasına iş eklenince burada haftalık takip listesi görünür.
+              Bu haftada Gantt’a göre planlanmış aktivite yok. Haftayı ← → ile değiştirin veya öncelik / kapasiteyi kontrol edin.
             </p>
           ) : (
             <div className="overflow-auto">

@@ -356,6 +356,51 @@ function nextIsoWeek(year: number, week: number): { year: number; week: number }
   return { year, week: week + 1 };
 }
 
+export function prevIsoWeek(year: number, week: number): { year: number; week: number } {
+  if (week <= 1) {
+    const py = year - 1;
+    return { year: py, week: weeksInIsoYear(py) };
+  }
+  return { year, week: week - 1 };
+}
+
+export { nextIsoWeek };
+
+/** Plan başlangıcından hedef ISO haftaya kadar kaçıncı hafta (0 tabanlı); hedef önceyse null */
+export function isoWeekOffsetFromPlanStart(
+  planStartIso: string,
+  year: number,
+  week: number
+): number | null {
+  const start = getIsoWeekParts(parseIsoDate(planStartIso));
+  if (year < start.year || (year === start.year && week < start.week)) return null;
+  let y = start.year;
+  let w = start.week;
+  for (let i = 0; i < 800; i++) {
+    if (y === year && w === week) return i;
+    const n = nextIsoWeek(y, w);
+    y = n.year;
+    w = n.week;
+  }
+  return null;
+}
+
+/** Gantt satırı seçilen ISO haftayla kesişiyor mu? */
+export function ganttRowOverlapsIsoWeek(
+  row: { startDay: number; durationDays: number },
+  planStartIso: string,
+  year: number,
+  week: number
+): boolean {
+  const offset = isoWeekOffsetFromPlanStart(planStartIso, year, week);
+  if (offset == null) return false;
+  const weekStart = offset * WORK_DAYS_PER_WEEK;
+  const weekEnd = weekStart + WORK_DAYS_PER_WEEK;
+  const jobStart = row.startDay;
+  const jobEnd = row.startDay + row.durationDays;
+  return jobStart < weekEnd && jobEnd > weekStart - 1e-9;
+}
+
 export function weekIndexFromPlanStart(_planStartIso: string, workDayOffset: number): number {
   return Math.max(0, workDayOffset) / WORK_DAYS_PER_WEEK;
 }
