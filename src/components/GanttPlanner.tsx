@@ -8,7 +8,6 @@ import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
   addDependency,
   addJobToStage,
-  adjustWeeklyCapacitiesByDelta,
   buildWeekTicks,
   clearAllJobProgress,
   clearAllJobs,
@@ -53,6 +52,7 @@ import {
 } from "@/lib/schedule";
 import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/supabase";
 import {
+  capacityKey,
   DEFAULT_PROJECT,
   activityCategory,
   buildCategoryToneMap,
@@ -124,8 +124,12 @@ export function GanttPlanner() {
   const [capRole, setCapRole] = useState("Donatım");
   const [capPeople, setCapPeople] = useState(3);
   const [capDeleteProject, setCapDeleteProject] = useState("");
+  /** Kapasite satırı seçimleri (capacityKey) — Haftalar ±1 yalnız bunlara */
+  const [capSelected, setCapSelected] = useState<string[]>([]);
+  /** Kişi değişiklikleri Güncelle’ye kadar taslakta; Gantt / DB henüz değişmez */
+  const [capDraft, setCapDraft] = useState<Record<string, number>>({});
   const [projectFilter, setProjectFilter] = useState<string>("all");
-  const [groupByProject, setGroupByProject] = useState(false);
+  const groupByProject = false;
   const [saveStatus, setSaveStatus] = useState("Yükleniyor…");
   const [overId, setOverId] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState("");
@@ -290,7 +294,47 @@ export function GanttPlanner() {
 
   useEffect(() => {
     if (capDeleteProject && capDeleteProject !== "all") setCapProject(capDeleteProject);
+    setCapSelected([]);
   }, [capDeleteProject]);
+
+  const capRowKey = useCallback(
+    (c: { project: string; year: number; week: number; role: string }) =>
+      capacityKey(c.project, Number(c.year), Number(c.week), normalizeRole(c.role)),
+    []
+  );
+
+  const capPeopleOf = useCallback(
+    (c: { project: string; year: number; week: number; role: string; people: number }) => {
+      const k = capRowKey(c);
+      return k in capDraft ? capDraft[k]! : c.people;
+    },
+    [capDraft, capRowKey]
+  );
+
+  const bumpSelectedCapWeeks = useCallback(
+    (delta: number) => {
+      if (!capSelected.length) {
+        setCapStatus("Önce hafta kutucuklarından seçim yapın.");
+        setCapError(true);
+        return;
+      }
+      setCapDraft((prev) => {
+        const next = { ...prev };
+        for (const key of capSelected) {
+          const row = plan.weeklyCapacities.find((c) => capRowKey(c) === key);
+          if (!row) continue;
+          const base = key in next ? next[key]! : row.people;
+          next[key] = Math.max(0, base + delta);
+        }
+        return next;
+      });
+      setCapStatus(
+        `${capSelected.length} hafta ${delta > 0 ? "+" : ""}${delta} kişi (taslak). Güncelle ile Gantt ve veritabanına yazın.`
+      );
+      setCapError(false);
+    },
+    [capSelected, plan.weeklyCapacities, capRowKey]
+  );
 
   const trackWeekParts = useMemo(() => parseTrackWeekLabel(trackWeek), [trackWeek]);
 
@@ -381,6 +425,45 @@ export function GanttPlanner() {
       setSaveStatus(result.message || "Kayıt hatası");
     }
   }, [plan, supabaseOn]);
+
+  const applyCapDraftAndSave = useCallback(async () => {
+    const keys = Object.keys(capDraft);
+    if (!keys.length) {
+      setCapStatus("Uygulanacak kapasite değişikliği yok. Önce hafta seçip ±1 yapın.");
+      setCapError(true);
+      return;
+    }
+    let next = plan;
+    for (const c of plan.weeklyCapacities) {
+      const k = capRowKey(c);
+      if (!(k in capDraft)) continue;
+      next = upsertWeeklyCapacity(next, {
+        project: c.project,
+        year: c.year,
+        week: c.week,
+        role: c.role,
+        people: capDraft[k]!,
+      });
+    }
+    setPlan(next);
+    setCapDraft({});
+    setCapSelected([]);
+    setSaveStatus("Kaydediliyor…");
+    const result = await savePlan(next);
+    if (result.ok) {
+      setSaveStatus(supabaseOn ? "Kaydedildi (veritabanı)" : "Bu cihazda kaydedildi");
+      setCapStatus(
+        `${keys.length} hafta güncellendi · Gantt yenilendi · ${
+          supabaseOn ? "veritabanına yazıldı" : "bu cihazda kaydedildi"
+        }.`
+      );
+      setCapError(false);
+    } else {
+      setSaveStatus(result.message || "Kayıt hatası");
+      setCapStatus(result.message || "Veritabanı kaydı başarısız.");
+      setCapError(true);
+    }
+  }, [capDraft, plan, capRowKey, supabaseOn]);
 
   const wipeEntirePlan = useCallback(async () => {
     if (
@@ -755,68 +838,6 @@ export function GanttPlanner() {
           </p>
         </header>
 
-        <div className="no-print flex flex-wrap items-start gap-x-5 gap-y-3 rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4">
-          <div className="flex min-w-[11rem] flex-col gap-1">
-            <span className="text-xs leading-4 text-[var(--muted)]">Başlangıç (Gantt hafta ekseni)</span>
-            <input
-              type="date"
-              value={plan.startDate}
-              onChange={(e) => setPlan({ ...plan, startDate: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
-            />
-            <span className="h-5" aria-hidden />
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs leading-4 text-[var(--muted)]">Günlük saat</span>
-            <input
-              type="number"
-              min={1}
-              max={24}
-              step={0.5}
-              value={plan.hoursPerDay}
-              onChange={(e) => setPlan({ ...plan, hoursPerDay: Math.max(1, Number(e.target.value) || 8) })}
-              className="h-9 w-28 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
-            />
-            <span className="h-5" aria-hidden />
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs leading-4 text-[var(--muted)]">Proje filtresi</span>
-            <select
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              className="h-9 min-w-[160px] rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
-            >
-              <option value="all">Tüm projeler</option>
-              {projects.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <span className="h-5" aria-hidden />
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="h-4" aria-hidden />
-            <label className="flex h-9 items-center gap-2 text-sm text-[var(--foreground)]">
-              <input
-                type="checkbox"
-                checked={groupByProject}
-                onChange={(e) => setGroupByProject(e.target.checked)}
-                className="size-4 accent-[var(--accent)]"
-              />
-              Projelere göre grupla
-            </label>
-            <span className="h-5" aria-hidden />
-          </div>
-          <div className="ml-auto flex flex-col gap-1">
-            <span className="h-4" aria-hidden />
-            <div className="flex h-9 items-center gap-3">
-              {pdfStatus && <span className="text-sm text-[var(--muted)]">{pdfStatus}</span>}
-            </div>
-            <span className="h-5" aria-hidden />
-          </div>
-        </div>
-
         <div className="grid w-full gap-4 lg:grid-cols-2">
         <section className="section-card section-card--tone-0 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
           <div className="section-card__header flex items-baseline justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wider">
@@ -945,49 +966,33 @@ export function GanttPlanner() {
               </button>
               <button
                 type="button"
-                disabled={sortedCapacities.length === 0}
-                title={
-                  capDeleteProject && capDeleteProject !== "all"
-                    ? `“${capDeleteProject}” tüm haftalarında kişi −1 (Gantt yenilenir)`
-                    : "Listedeki tüm haftalarda kişi −1"
-                }
+                disabled={capSelected.length === 0}
+                title="Seçili haftalarda kişi −1 (taslak; Güncelle ile uygulanır)"
                 className="h-9 rounded-lg border border-[var(--card-border)] px-3 text-sm font-semibold disabled:opacity-40"
-                onClick={() => {
-                  setPlan((p) =>
-                    adjustWeeklyCapacitiesByDelta(p, capDeleteProject || "all", -1)
-                  );
-                  setCapStatus(
-                    capDeleteProject && capDeleteProject !== "all"
-                      ? `“${capDeleteProject}” kapasitesi −1 kişi.`
-                      : "Tüm kapasiteler −1 kişi."
-                  );
-                  setCapError(false);
-                }}
+                onClick={() => bumpSelectedCapWeeks(-1)}
               >
                 Haftalar −1
               </button>
               <button
                 type="button"
-                disabled={sortedCapacities.length === 0}
-                title={
-                  capDeleteProject && capDeleteProject !== "all"
-                    ? `“${capDeleteProject}” tüm haftalarında kişi +1 (Gantt yenilenir)`
-                    : "Listedeki tüm haftalarda kişi +1"
-                }
+                disabled={capSelected.length === 0}
+                title="Seçili haftalarda kişi +1 (taslak; Güncelle ile uygulanır)"
                 className="h-9 rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 disabled:opacity-40"
-                onClick={() => {
-                  setPlan((p) =>
-                    adjustWeeklyCapacitiesByDelta(p, capDeleteProject || "all", 1)
-                  );
-                  setCapStatus(
-                    capDeleteProject && capDeleteProject !== "all"
-                      ? `“${capDeleteProject}” kapasitesi +1 kişi.`
-                      : "Tüm kapasiteler +1 kişi."
-                  );
-                  setCapError(false);
-                }}
+                onClick={() => bumpSelectedCapWeeks(1)}
               >
                 Haftalar +1
+              </button>
+              <button
+                type="button"
+                disabled={Object.keys(capDraft).length === 0}
+                title="Taslak kapasiteyi Gantt’a uygula ve veritabanına yaz"
+                className="h-9 rounded-lg bg-[var(--accent)] px-3 text-sm font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-40"
+                onClick={() => void applyCapDraftAndSave()}
+              >
+                Güncelle
+                {Object.keys(capDraft).length > 0
+                  ? ` (${Object.keys(capDraft).length})`
+                  : ""}
               </button>
             </div>
             {capStatus && (
@@ -1042,10 +1047,47 @@ export function GanttPlanner() {
 
             {sortedCapacities.length > 0 ? (
               <div className="max-h-[min(70vh,36rem)] space-y-2 overflow-auto">
-                {sortedCapacities.map((c) => (
+                <div className="flex items-center gap-2 px-1 text-[11px] text-[var(--muted)]">
+                  <label className="flex cursor-pointer items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-[var(--accent)]"
+                      checked={
+                        sortedCapacities.length > 0 &&
+                        sortedCapacities.every((c) => capSelected.includes(capRowKey(c)))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCapSelected(sortedCapacities.map((c) => capRowKey(c)));
+                        } else {
+                          setCapSelected([]);
+                        }
+                      }}
+                    />
+                    Tümünü seç
+                  </label>
+                  <span className="tabular-nums">
+                    {capSelected.length} seçili
+                    {Object.keys(capDraft).length > 0
+                      ? ` · ${Object.keys(capDraft).length} taslak`
+                      : ""}
+                  </span>
+                </div>
+                {sortedCapacities.map((c) => {
+                  const rowKey = capRowKey(c);
+                  const selected = capSelected.includes(rowKey);
+                  const people = capPeopleOf(c);
+                  const drafted = rowKey in capDraft;
+                  return (
                   <div
-                    key={`${c.project}-${c.year}-${c.week}-${c.role}`}
-                    className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 py-1.5 text-sm"
+                    key={rowKey}
+                    className={`flex flex-wrap items-center gap-1.5 rounded-lg border px-2 py-1.5 text-sm ${
+                      selected
+                        ? "border-[var(--accent)] bg-[var(--accent)]/5"
+                        : drafted
+                          ? "border-amber-300 bg-amber-50/50"
+                          : "border-[var(--card-border)] bg-[var(--background)]"
+                    }`}
                   >
                     <input
                       defaultValue={c.project}
@@ -1063,9 +1105,24 @@ export function GanttPlanner() {
                         );
                       }}
                     />
+                    <input
+                      type="checkbox"
+                      className="size-3.5 shrink-0 accent-[var(--accent)]"
+                      checked={selected}
+                      title="Bu haftayı Haftalar ±1 için seç"
+                      onChange={(e) => {
+                        setCapSelected((prev) =>
+                          e.target.checked
+                            ? prev.includes(rowKey)
+                              ? prev
+                              : [...prev, rowKey]
+                            : prev.filter((k) => k !== rowKey)
+                        );
+                      }}
+                    />
                     <span className="text-[var(--muted)]">·</span>
                     <input
-                      key={`${c.project}-${c.year}-${c.week}-${c.role}-week`}
+                      key={`${rowKey}-week`}
                       defaultValue={formatWeekLabel(c.year, c.week)}
                       className="w-[5.5rem] rounded border border-transparent bg-transparent px-1 py-0.5 tabular-nums hover:border-[var(--card-border)] focus:border-[var(--accent)] focus:outline-none"
                       onBlur={(e) => {
@@ -1120,26 +1177,18 @@ export function GanttPlanner() {
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
-                        title="Bu hafta kişi −1 — Gantt yeniden yerleşir"
-                        className="h-8 w-8 rounded border border-[var(--card-border)] text-sm font-semibold"
+                        disabled={selected}
+                        title={
+                          selected
+                            ? "Seçili hafta: yalnızca Haftalar ±1"
+                            : "Taslak kişi −1"
+                        }
+                        className="h-8 w-8 rounded border border-[var(--card-border)] text-sm font-semibold disabled:opacity-40"
                         onClick={() =>
-                          setPlan((p) => {
-                            const cur =
-                              p.weeklyCapacities.find(
-                                (x) =>
-                                  x.project === c.project &&
-                                  Number(x.year) === Number(c.year) &&
-                                  Number(x.week) === Number(c.week) &&
-                                  normalizeRole(x.role) === normalizeRole(c.role)
-                              )?.people ?? c.people;
-                            return upsertWeeklyCapacity(p, {
-                              project: c.project,
-                              year: c.year,
-                              week: c.week,
-                              role: c.role,
-                              people: Math.max(0, cur - 1),
-                            });
-                          })
+                          setCapDraft((prev) => ({
+                            ...prev,
+                            [rowKey]: Math.max(0, (prev[rowKey] ?? c.people) - 1),
+                          }))
                         }
                       >
                         −
@@ -1148,45 +1197,33 @@ export function GanttPlanner() {
                         type="number"
                         min={0}
                         step={1}
-                        value={c.people}
-                        title="Bu haftanın proje × rol işgücü kapasitesi (kişi). Değişince Gantt yenilenir."
-                        className="h-8 w-14 rounded border border-amber-200 bg-amber-50/70 px-1 text-center text-sm tabular-nums text-amber-950 focus:border-[var(--accent)] focus:outline-none"
+                        value={people}
+                        disabled={selected}
+                        title={
+                          selected
+                            ? "Seçili hafta: yalnızca Haftalar ±1 ile değiştirin"
+                            : "Taslak kişi; Güncelle ile uygulanır"
+                        }
+                        className="h-8 w-14 rounded border border-amber-200 bg-amber-50/70 px-1 text-center text-sm tabular-nums text-amber-950 focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
                         onChange={(e) => {
-                          const people = Math.max(0, Number(e.target.value) || 0);
-                          if (people === c.people) return;
-                          setPlan((p) =>
-                            upsertWeeklyCapacity(p, {
-                              project: c.project,
-                              year: c.year,
-                              week: c.week,
-                              role: c.role,
-                              people,
-                            })
-                          );
+                          const v = Math.max(0, Number(e.target.value) || 0);
+                          setCapDraft((prev) => ({ ...prev, [rowKey]: v }));
                         }}
                       />
                       <button
                         type="button"
-                        title="Bu hafta kişi +1 — Gantt yeniden yerleşir"
-                        className="h-8 w-8 rounded border border-amber-200 bg-amber-50 text-sm font-semibold text-amber-900"
+                        disabled={selected}
+                        title={
+                          selected
+                            ? "Seçili hafta: yalnızca Haftalar ±1"
+                            : "Taslak kişi +1"
+                        }
+                        className="h-8 w-8 rounded border border-amber-200 bg-amber-50 text-sm font-semibold text-amber-900 disabled:opacity-40"
                         onClick={() =>
-                          setPlan((p) => {
-                            const cur =
-                              p.weeklyCapacities.find(
-                                (x) =>
-                                  x.project === c.project &&
-                                  Number(x.year) === Number(c.year) &&
-                                  Number(x.week) === Number(c.week) &&
-                                  normalizeRole(x.role) === normalizeRole(c.role)
-                              )?.people ?? c.people;
-                            return upsertWeeklyCapacity(p, {
-                              project: c.project,
-                              year: c.year,
-                              week: c.week,
-                              role: c.role,
-                              people: cur + 1,
-                            });
-                          })
+                          setCapDraft((prev) => ({
+                            ...prev,
+                            [rowKey]: (prev[rowKey] ?? c.people) + 1,
+                          }))
                         }
                       >
                         +
@@ -1205,7 +1242,8 @@ export function GanttPlanner() {
                       Sil
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : plan.weeklyCapacities.length > 0 &&
               capDeleteProject &&
@@ -1215,9 +1253,9 @@ export function GanttPlanner() {
               </p>
             ) : null}
             <p className="text-[11px] text-[var(--muted)]">
-              Proje seçin → satırda <strong>− / +</strong> ile o haftanın işgücünü değiştirin veya{" "}
-              <strong>Haftalar ±1</strong> ile seçili projenin tüm haftalarını birden kaydırın. Kapasite
-              değişince Gantt otomatik yeniden yerleşir.
+              Hafta kutucuğunu işaretleyin → <strong>Haftalar ±1</strong> ile kişi sayısını değiştirin →{" "}
+              <strong>Güncelle</strong> ile Gantt’a uygulayın ve veritabanına yazın. Seçili satırlarda satır
+              ± düğmeleri kapalıdır.
             </p>
           </div>
         </section>
