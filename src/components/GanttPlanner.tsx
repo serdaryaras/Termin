@@ -12,6 +12,7 @@ import {
   clearAllJobProgress,
   clearAllJobs,
   clearAllWeeklyCapacities,
+  clearWeeklyCapacitiesForProject,
   clearDependenciesForJobs,
   clearEntirePlan,
   clearJobProgressForWeek,
@@ -119,6 +120,7 @@ export function GanttPlanner() {
   const [capWeek, setCapWeek] = useState("2026-35");
   const [capRole, setCapRole] = useState("Donatım");
   const [capPeople, setCapPeople] = useState(3);
+  const [capDeleteProject, setCapDeleteProject] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [groupByProject, setGroupByProject] = useState(false);
   const [saveStatus, setSaveStatus] = useState("Yükleniyor…");
@@ -257,6 +259,24 @@ export function GanttPlanner() {
       return a.week - b.week;
     });
   }, [plan.weeklyCapacities]);
+
+  const capacityProjects = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of plan.weeklyCapacities) {
+      set.add(c.project || DEFAULT_PROJECT);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, "tr"));
+  }, [plan.weeklyCapacities]);
+
+  useEffect(() => {
+    if (!capacityProjects.length) {
+      if (capDeleteProject) setCapDeleteProject("");
+      return;
+    }
+    if (!capacityProjects.includes(capDeleteProject)) {
+      setCapDeleteProject(capacityProjects[0]!);
+    }
+  }, [capacityProjects, capDeleteProject]);
 
   const trackWeekParts = useMemo(() => parseTrackWeekLabel(trackWeek), [trackWeek]);
 
@@ -857,6 +877,56 @@ export function GanttPlanner() {
                 }}
               >
                 Tüm kapasiteyi sil
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={capDeleteProject}
+                onChange={(e) => setCapDeleteProject(e.target.value)}
+                disabled={capacityProjects.length === 0}
+                className="h-9 min-w-[12rem] rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 text-sm disabled:opacity-40"
+                title="Kapasitesi silinecek proje"
+              >
+                {capacityProjects.length === 0 ? (
+                  <option value="">Kapasite yok</option>
+                ) : (
+                  capacityProjects.map((p) => (
+                    <option key={p} value={p}>
+                      {p} (
+                      {
+                        plan.weeklyCapacities.filter(
+                          (c) => (c.project || DEFAULT_PROJECT) === p
+                        ).length
+                      }
+                      )
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                type="button"
+                disabled={!capDeleteProject || capacityProjects.length === 0}
+                className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:opacity-40"
+                title="Seçili projenin tüm kapasite / kaynak tanımlarını sil"
+                onClick={() => {
+                  const project = capDeleteProject.trim();
+                  if (!project) return;
+                  const count = plan.weeklyCapacities.filter(
+                    (c) => (c.project || DEFAULT_PROJECT) === project
+                  ).length;
+                  if (!count) return;
+                  if (
+                    !confirm(
+                      `“${project}” projesinin ${count} kapasite / kaynak kaydı silinsin mi?`
+                    )
+                  )
+                    return;
+                  setPlan(clearWeeklyCapacitiesForProject(plan, project));
+                  setCapStatus(`“${project}” kapasitesi silindi (${count} kayıt).`);
+                  setCapError(false);
+                }}
+              >
+                Proje kapasitesini sil
               </button>
             </div>
             {capStatus && (

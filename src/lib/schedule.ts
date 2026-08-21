@@ -175,6 +175,17 @@ export function clearAllWeeklyCapacities(plan: Plan): Plan {
   return { ...plan, weeklyCapacities: [] };
 }
 
+/** Belirli bir projenin tüm haftalık kapasite / kaynak tanımlarını siler */
+export function clearWeeklyCapacitiesForProject(plan: Plan, project: string): Plan {
+  const key = (project || "").trim();
+  if (!key) return plan;
+  const next = clonePlan(plan);
+  next.weeklyCapacities = next.weeklyCapacities.filter(
+    (c) => (c.project || DEFAULT_PROJECT) !== key
+  );
+  return next;
+}
+
 function moveStage(stages: Stage[], from: number, to: number): Stage[] {
   if (from === to || from < 0 || to < 0 || from >= stages.length) return stages;
   const copy = stages.map((s) => ({ jobIds: [...s.jobIds] }));
