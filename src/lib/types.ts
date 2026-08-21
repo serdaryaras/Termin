@@ -117,6 +117,71 @@ export function normalizeRole(raw: string | undefined | null): string {
 
 export const BAR_COLORS = ["#0d4f8b", "#6d28d9", "#0f766e", "#b45309", "#be123c"];
 
+/** İsimdeki son `[KATEGORİ]` etiketi — yoksa boş */
+export function activityCategory(name: string): string {
+  const matches = [...String(name || "").matchAll(/\[([^\]]+)\]/g)];
+  if (!matches.length) return "";
+  return (matches[matches.length - 1]![1] || "").trim();
+}
+
+/** Cyan, sarı, mavi ve uyumlu pastel tonlar */
+export const CATEGORY_PALETTE: ReadonlyArray<{
+  label: string;
+  bar: string;
+  bg: string;
+  border: string;
+}> = [
+  { label: "cyan", bar: "#0891b2", bg: "#ecfeff", border: "#67e8f9" },
+  { label: "yellow", bar: "#ca8a04", bg: "#fefce8", border: "#fde047" },
+  { label: "blue", bar: "#2563eb", bg: "#eff6ff", border: "#93c5fd" },
+  { label: "teal", bar: "#0d9488", bg: "#f0fdfa", border: "#5eead4" },
+  { label: "amber", bar: "#d97706", bg: "#fffbeb", border: "#fcd34d" },
+  { label: "indigo", bar: "#4f46e5", bg: "#eef2ff", border: "#a5b4fc" },
+  { label: "sky", bar: "#0284c7", bg: "#f0f9ff", border: "#7dd3fc" },
+  { label: "lime", bar: "#65a30d", bg: "#f7fee7", border: "#bef264" },
+  { label: "violet", bar: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
+  { label: "rose", bar: "#e11d48", bg: "#fff1f2", border: "#fda4af" },
+];
+
+const CATEGORY_PREF: Record<string, number> = {
+  ARRGMNT: 0,
+  ARRANGEMENT: 0,
+  ARRANGE: 0,
+  STRUCT: 1,
+  STRUCTURE: 1,
+  STEEL: 1,
+  PIPE: 2,
+  PIPING: 2,
+  HVAC: 3,
+  ELEC: 4,
+  ELECTRICAL: 4,
+  OUTFIT: 5,
+  OUTFITTING: 5,
+  PAINT: 6,
+  INSUL: 7,
+  INSULATION: 7,
+};
+
+function hashCategory(key: string): number {
+  let h = 0;
+  const s = key.toLocaleUpperCase("tr");
+  for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+export type CategoryTone = (typeof CATEGORY_PALETTE)[number];
+
+export function categoryTone(category: string): CategoryTone {
+  const key = (category || "").trim();
+  if (!key) {
+    return { label: "none", bar: "#64748b", bg: "#f8fafc", border: "#e2e8f0" };
+  }
+  const pref = CATEGORY_PREF[key.toLocaleUpperCase("en-US")] ?? CATEGORY_PREF[key.toLocaleUpperCase("tr")];
+  const idx =
+    pref != null ? pref % CATEGORY_PALETTE.length : hashCategory(key) % CATEGORY_PALETTE.length;
+  return CATEGORY_PALETTE[idx]!;
+}
+
 export function todayIso(): string {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, "0");

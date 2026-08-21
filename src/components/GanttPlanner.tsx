@@ -47,6 +47,8 @@ import {
 import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/supabase";
 import {
   DEFAULT_PROJECT,
+  activityCategory,
+  categoryTone,
   emptyPlan,
   jobKey,
   listProjects,
@@ -1389,6 +1391,7 @@ export function GanttPlanner() {
                           const chainIdx = selectChain.indexOf(id);
                           const inChain = chainIdx >= 0;
                           const isSelected = selected === id || inChain;
+                          const tone = categoryTone(activityCategory(job.name));
                           return (
                             <article
                               key={id}
@@ -1396,12 +1399,20 @@ export function GanttPlanner() {
                               draggable
                               onClick={(e) => onPriorityClick(id, e)}
                               onDragStart={onDragStart(id)}
+                              style={
+                                isSelected
+                                  ? undefined
+                                  : {
+                                      background: tone.bg,
+                                      borderColor: tone.border,
+                                    }
+                              }
                               className={`relative flex min-w-0 cursor-grab select-none flex-col gap-0 rounded border px-1 py-0.5 ${
                                 isSelected
                                   ? "border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/30"
                                   : preds.length || succs.length
-                                    ? "border-amber-400/70 bg-[var(--card)]"
-                                    : "border-[var(--card-border)]/60 bg-[var(--card)] hover:border-[var(--card-border)]"
+                                    ? "border-amber-400/70"
+                                    : "hover:brightness-[0.98]"
                               }`}
                             >
                               <div className="flex items-center gap-0.5">
@@ -1867,7 +1878,7 @@ function GanttView({
   }, [model.rows, groupByProject]);
 
   const stickyLabelClass =
-    "sticky left-0 z-10 flex shrink-0 items-center border-r border-[var(--card-border)] bg-white shadow-[3px_0_6px_-3px_rgba(15,23,42,0.18)]";
+    "sticky left-0 z-10 flex shrink-0 items-center border-r border-[var(--card-border)] shadow-[3px_0_6px_-3px_rgba(15,23,42,0.18)]";
 
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
@@ -1882,7 +1893,7 @@ function GanttView({
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
           <div
-            className={`${stickyLabelClass} z-30`}
+            className={`${stickyLabelClass} z-30 bg-white`}
             style={{ width: labelsW, minWidth: labelsW }}
           >
             <div className="px-2 py-1" style={{ width: nameColPx, minWidth: nameColPx }}>
@@ -1937,7 +1948,11 @@ function GanttView({
                 >
                   <div
                     className={stickyLabelClass}
-                    style={{ width: labelsW, minWidth: labelsW }}
+                    style={{
+                      width: labelsW,
+                      minWidth: labelsW,
+                      background: r.tint || "#fff",
+                    }}
                   >
                     <div
                       className="truncate whitespace-nowrap px-2 py-0.5 text-[11px]"
@@ -1959,6 +1974,7 @@ function GanttView({
                     className="relative h-6"
                     style={{
                       width: ticks.length * weekPx,
+                      backgroundColor: r.tint || "transparent",
                       backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${weekPx - 1}px, var(--card-border) ${weekPx - 1}px, var(--card-border) ${weekPx}px)`,
                     }}
                   >
@@ -1982,10 +1998,13 @@ function GanttView({
           </div>
         ))}
       <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-[var(--muted)]">
-        {[...model.roleColors.entries()].map(([role, color]) => (
-          <span key={role} className="inline-flex items-center gap-1.5">
-            <i className="inline-block h-2.5 w-2.5" style={{ background: color }} />
-            {role}
+        {(model.categoryColors.size
+          ? [...model.categoryColors.entries()]
+          : [...model.roleColors.entries()]
+        ).map(([label, color]) => (
+          <span key={label} className="inline-flex items-center gap-1.5">
+            <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+            {model.categoryColors.size ? `[${label}]` : label}
           </span>
         ))}
         <span>

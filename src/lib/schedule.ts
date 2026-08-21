@@ -1,6 +1,8 @@
 import {
+  activityCategory,
   BAR_COLORS,
   capacityKey,
+  categoryTone,
   DEFAULT_PROJECT,
   emptyPlan,
   normalizeRole,
@@ -592,6 +594,9 @@ export type GanttRow = {
   startDay: number;
   durationDays: number;
   color: string;
+  /** Satır gölgesi ([KATEGORİ] pastel) */
+  tint: string;
+  category: string;
   capacityOk: boolean;
 };
 
@@ -600,6 +605,7 @@ export type GanttModel = {
   totalHours: number;
   totalDays: number;
   roleColors: Map<string, string>;
+  categoryColors: Map<string, string>;
   warnings: string[];
 };
 
@@ -617,6 +623,7 @@ export function computeGantt(plan: Plan): GanttModel {
   const endByJob = new Map<string, number>();
   const rows: GanttRow[] = [];
   const roleColors = new Map<string, string>();
+  const categoryColors = new Map<string, string>();
   const warnings: string[] = [];
   let colorI = 0;
   let maxEndDay = 0;
@@ -679,6 +686,12 @@ export function computeGantt(plan: Plan): GanttModel {
       colorI += 1;
     }
 
+    const category = activityCategory(job.name);
+    const tone = categoryTone(category);
+    if (category && !categoryColors.has(category)) {
+      categoryColors.set(category, tone.bar);
+    }
+
     maxEndDay = Math.max(maxEndDay, endDay);
 
     rows.push({
@@ -687,7 +700,9 @@ export function computeGantt(plan: Plan): GanttModel {
       lane,
       startDay,
       durationDays,
-      color: roleColors.get(role)!,
+      color: category ? tone.bar : roleColors.get(role)!,
+      tint: tone.bg,
+      category,
       capacityOk: placed,
     });
   }
@@ -697,6 +712,7 @@ export function computeGantt(plan: Plan): GanttModel {
     totalHours,
     totalDays: maxEndDay,
     roleColors,
+    categoryColors,
     warnings,
   };
 }
