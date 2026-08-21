@@ -189,6 +189,10 @@ export function GanttPlanner() {
     [plan.jobs]
   );
   const place = selected ? findPlacement(plan, selected) : null;
+  const ganttGapPlace = useMemo(() => {
+    const id = ganttSelectIds.length ? ganttSelectIds[ganttSelectIds.length - 1]! : null;
+    return id ? findPlacement(plan, id) : null;
+  }, [ganttSelectIds, plan]);
   const linkTargetIds = useMemo(() => {
     if (selectChain.length) return selectChain;
     return selected ? [selected] : [];
@@ -1897,6 +1901,31 @@ export function GanttPlanner() {
             <span className="hidden text-[10px] text-[var(--muted)] lg:inline">
               Tıkla = seç · sürükle = grubu taşı
             </span>
+            <label
+              className="flex items-center gap-1 rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]"
+              title="Seçili aktivitenin aşamasından sonra N iş günü boşluk; sonraki aktiviteler ötelenir"
+            >
+              Boşluk
+              <input
+                type="number"
+                min={0}
+                step={1}
+                disabled={!ganttGapPlace}
+                value={
+                  ganttGapPlace
+                    ? plan.stages[ganttGapPlace.stageIndex]?.gapAfterDays ?? 0
+                    : 0
+                }
+                onChange={(e) => {
+                  if (!ganttGapPlace) return;
+                  setPlan(
+                    setStageGapAfterDays(plan, ganttGapPlace.stageIndex, Number(e.target.value))
+                  );
+                }}
+                className="h-6 w-12 rounded border border-[var(--card-border)] bg-[var(--card)] px-1 text-[11px] tabular-nums text-[var(--foreground)] disabled:opacity-40"
+              />
+              <span className="whitespace-nowrap">iş günü</span>
+            </label>
             {ganttSelectIds.length > 0 && (
               <button
                 type="button"
