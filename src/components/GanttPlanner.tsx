@@ -1612,8 +1612,8 @@ export function GanttPlanner() {
               </div>
             </details>
             <p className="text-[11px] text-[var(--muted)]">
-              Aktarım sırası: satırlar yukarıdan aşağı, her satırda kategori sütun sırası. İnce ayar
-              Öncelik / Gantt’tan yapılır.
+              Aktarım sırası: önce 1. kategori (tüm resimler), sonra 2., sonra 3.… Aynı resimde kategori FS
+              bağı korunur. İnce ayar Öncelik / Gantt’tan yapılır.
             </p>
           </div>
 

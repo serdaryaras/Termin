@@ -205,7 +205,8 @@ function parseMatrixExcelText(lines: string[]): ParsedJobImport {
     categoryHeaders = Array.from({ length: n }, (_, i) => `Kategori${i + 1}`);
   }
 
-  const rows: ParsedRow[] = [];
+  /** Öncelik: önce tüm 1. kategori (satır sırasıyla), sonra 2., … */
+  const byCategory: ParsedRow[][] = categoryHeaders.map(() => []);
   const dependencies: ParsedJobImport["dependencies"] = [];
   let skipped = 0;
 
@@ -229,13 +230,15 @@ function parseMatrixExcelText(lines: string[]): ParsedJobImport {
       const parsed = parseRoleHoursCell(cell || "");
       if (!parsed) continue;
       const category = categoryHeaders[c] || `Kategori${c + 1}`;
-      chain.push({
+      const row: ParsedRow = {
         name: buildActivityName(split.code, category, split.title),
         project,
         role: parsed.role,
         hours: parsed.hours,
         people: 1,
-      });
+      };
+      chain.push(row);
+      byCategory[c]!.push(row);
     }
 
     if (!chain.length) {
@@ -243,7 +246,6 @@ function parseMatrixExcelText(lines: string[]): ParsedJobImport {
       continue;
     }
 
-    for (const row of chain) rows.push(row);
     for (let k = 0; k < chain.length - 1; k++) {
       const pred = chain[k]!;
       const succ = chain[k + 1]!;
@@ -254,6 +256,7 @@ function parseMatrixExcelText(lines: string[]): ParsedJobImport {
     }
   }
 
+  const rows = byCategory.flat();
   return { rows, dependencies, skipped, format: "matrix" };
 }
 
