@@ -393,18 +393,44 @@ export function upsertWeeklyCapacity(
 ): Plan {
   const next = clonePlan(plan);
   const normalized: ProjectWeekCapacity = {
-    ...entry,
-    project: entry.project.trim(),
+    project: String(entry.project || "").trim() || DEFAULT_PROJECT,
+    year: Math.round(Number(entry.year)),
+    week: Math.round(Number(entry.week)),
     role: normalizeRole(entry.role),
-    people: Number(entry.people) || 0,
+    people: Math.max(0, Number(entry.people) || 0),
   };
+  if (!Number.isFinite(normalized.year) || !Number.isFinite(normalized.week)) return plan;
   const key = capacityKey(normalized.project, normalized.year, normalized.week, normalized.role);
   const idx = next.weeklyCapacities.findIndex(
-    (c) => capacityKey(c.project, c.year, c.week, c.role) === key
+    (c) =>
+      capacityKey(c.project, Number(c.year), Number(c.week), normalizeRole(c.role)) === key
   );
   if (idx >= 0) next.weeklyCapacities[idx] = normalized;
   else next.weeklyCapacities.push(normalized);
   return next;
+}
+
+/** Proje × hafta × rol için tanımlı kapasite (yoksa null) */
+export function getWeeklyCapacityPeople(
+  plan: Plan,
+  project: string,
+  year: number,
+  week: number,
+  role?: string
+): number | null {
+  const wantProject = (project || DEFAULT_PROJECT).trim().toLocaleLowerCase("tr");
+  let sum = 0;
+  let found = false;
+  for (const c of plan.weeklyCapacities) {
+    if ((c.project || DEFAULT_PROJECT).trim().toLocaleLowerCase("tr") !== wantProject) continue;
+    if (Number(c.year) !== year || Number(c.week) !== week) continue;
+    if (role) {
+      if (normalizeRole(c.role) !== normalizeRole(role)) continue;
+    }
+    sum += Number(c.people) || 0;
+    found = true;
+  }
+  return found ? sum : null;
 }
 
 /** Seçili projenin (veya tümünün) haftalık kişi kapasitelerini delta kadar kaydırır */
@@ -640,7 +666,10 @@ export function priorityJobs(plan: Plan): Array<{ job: Job; stage: number }> {
 function capacityLookup(plan: Plan): Map<string, number> {
   const map = new Map<string, number>();
   for (const c of plan.weeklyCapacities) {
-    const key = capacityKey(c.project, c.year, c.week, normalizeRole(c.role));
+    const year = Number(c.year);
+    const week = Number(c.week);
+    if (!Number.isFinite(year) || !Number.isFinite(week)) continue;
+    const key = capacityKey(c.project, year, week, normalizeRole(c.role));
     const people = Number(c.people);
     if (!Number.isFinite(people) || people < 0) continue;
     map.set(key, (map.get(key) ?? 0) + people);
@@ -658,13 +687,29 @@ function cappedProjectRoles(plan: Plan): Set<string> {
   return set;
 }
 
-function daysOccupied(durationDays: number): number {
-  return Math.max(1, Math.ceil(durationDays - 1e-9));
-}
-
 /** Kapasite ızgarası her zaman tam iş günü indeksi kullanır (ondalık anahtar kaymasını önler). */
 function dayIndex(day: number): number {
   return Math.floor(day + 1e-9);
+}
+
+/**
+ * [start, start+duration) aralığının her iş gününe düşen kesir (0–1).
+ * ceil ile fazla gün yakalamayı önler — 6.25 gün gerçekten 6.25 kişi·gün yer.
+ */
+function dayFractionsInSpan(startDay: number, durationDays: number): Array<{ day: number; frac: number }> {
+  const start = Math.max(0, startDay);
+  const end = start + Math.max(1e-9, durationDays);
+  const out: Array<{ day: number; frac: number }> = [];
+  const first = dayIndex(start);
+  const last = Math.max(first, Math.ceil(end - 1e-9) - 1);
+  for (let day = first; day <= last; day++) {
+    const lo = Math.max(start, day);
+    const hi = Math.min(end, day + 1);
+    const frac = hi - lo;
+    if (frac > 1e-9) out.push({ day, frac: Math.min(1, frac) });
+  }
+  if (!out.length) out.push({ day: first, frac: 1 });
+  return out;
 }
 
 function jobDurationDays(job: Job, hoursPerDay: number): number {
@@ -699,6 +744,7 @@ function weekCapacityAvailable(
 /**
  * İş-günü çözünürlüğünde yerleştir: biten işin hemen ardından kapasite açılır.
  * Haftalık kişi limiti o takvim haftasındaki her iş günü için geçerlidir.
+ * Kısmi günler kesirli kişi·gün olarak sayılır (ceil şişirmesi yok).
  */
 function canPlaceAtDay(
   plan: Plan,
@@ -711,16 +757,14 @@ function canPlaceAtDay(
   durationDays: number,
   people: number
 ): boolean {
-  const start = dayIndex(startDay);
-  const days = daysOccupied(durationDays);
   const pair = pairKey(project, role);
-  const need = Number(people) || 1;
-  for (let i = 0; i < days; i++) {
-    const day = start + i;
+  const needPeople = Number(people) || 1;
+  for (const { day, frac } of dayFractionsInSpan(startDay, durationDays)) {
     const weekOffset = Math.floor(day / WORK_DAYS_PER_WEEK);
     const available = weekCapacityAvailable(plan, capMap, capped, project, role, weekOffset);
     const already = used.get(`${pair}::d${day}`) ?? 0;
-    if (already + need > available + 1e-9) return false;
+    const need = needPeople * frac;
+    if (already + need > available + 1e-6) return false;
   }
   return true;
 }
@@ -733,13 +777,11 @@ function placeJobAtDay(
   durationDays: number,
   people: number
 ) {
-  const start = dayIndex(startDay);
-  const days = daysOccupied(durationDays);
   const pair = pairKey(project, role);
-  const need = Number(people) || 1;
-  for (let i = 0; i < days; i++) {
-    const key = `${pair}::d${start + i}`;
-    used.set(key, (used.get(key) ?? 0) + need);
+  const needPeople = Number(people) || 1;
+  for (const { day, frac } of dayFractionsInSpan(startDay, durationDays)) {
+    const key = `${pair}::d${day}`;
+    used.set(key, (used.get(key) ?? 0) + needPeople * frac);
   }
 }
 
@@ -853,7 +895,7 @@ export function computeGantt(plan: Plan): GanttModel {
       startDay = earliest;
     }
 
-    const endDay = dayIndex(startDay) + durationDays;
+    const endDay = startDay + durationDays;
     endByJob.set(job.id, endDay);
     stageMaxEnd = Math.max(stageMaxEnd, endDay);
 

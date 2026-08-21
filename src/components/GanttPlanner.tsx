@@ -27,6 +27,7 @@ import {
   formatWeekOnly,
   ganttRowOverlapsIsoWeek,
   getIsoWeekParts,
+  getWeeklyCapacityPeople,
   jobById,
   moveJobsByDelta,
   moveJobsDir,
@@ -1122,15 +1123,23 @@ export function GanttPlanner() {
                         title="Bu hafta kişi −1 — Gantt yeniden yerleşir"
                         className="h-8 w-8 rounded border border-[var(--card-border)] text-sm font-semibold"
                         onClick={() =>
-                          setPlan((p) =>
-                            upsertWeeklyCapacity(p, {
+                          setPlan((p) => {
+                            const cur =
+                              p.weeklyCapacities.find(
+                                (x) =>
+                                  x.project === c.project &&
+                                  Number(x.year) === Number(c.year) &&
+                                  Number(x.week) === Number(c.week) &&
+                                  normalizeRole(x.role) === normalizeRole(c.role)
+                              )?.people ?? c.people;
+                            return upsertWeeklyCapacity(p, {
                               project: c.project,
                               year: c.year,
                               week: c.week,
                               role: c.role,
-                              people: Math.max(0, c.people - 1),
-                            })
-                          )
+                              people: Math.max(0, cur - 1),
+                            });
+                          })
                         }
                       >
                         −
@@ -1161,15 +1170,23 @@ export function GanttPlanner() {
                         title="Bu hafta kişi +1 — Gantt yeniden yerleşir"
                         className="h-8 w-8 rounded border border-amber-200 bg-amber-50 text-sm font-semibold text-amber-900"
                         onClick={() =>
-                          setPlan((p) =>
-                            upsertWeeklyCapacity(p, {
+                          setPlan((p) => {
+                            const cur =
+                              p.weeklyCapacities.find(
+                                (x) =>
+                                  x.project === c.project &&
+                                  Number(x.year) === Number(c.year) &&
+                                  Number(x.week) === Number(c.week) &&
+                                  normalizeRole(x.role) === normalizeRole(c.role)
+                              )?.people ?? c.people;
+                            return upsertWeeklyCapacity(p, {
                               project: c.project,
                               year: c.year,
                               week: c.week,
                               role: c.role,
-                              people: c.people + 1,
-                            })
-                          )
+                              people: cur + 1,
+                            });
+                          })
                         }
                       >
                         +
@@ -2038,6 +2055,8 @@ export function GanttPlanner() {
                 </>
               )}
               <GanttView
+                plan={plan}
+                capacityProject={projectFilter !== "all" ? projectFilter : null}
                 planStart={plan.startDate}
                 model={filteredGantt}
                 groupByProject={groupByProject}
@@ -2298,6 +2317,8 @@ export function GanttPlanner() {
 }
 
 function GanttView({
+  plan,
+  capacityProject = null,
   planStart,
   model,
   groupByProject,
@@ -2307,6 +2328,9 @@ function GanttView({
   onToggleSelect,
   onMoveGroupBefore,
 }: {
+  plan: Plan;
+  /** Proje seçiliyse hafta başlığında toplam kapasite (kişi) gösterilir */
+  capacityProject?: string | null;
   planStart: string;
   model: ReturnType<typeof computeGantt>;
   groupByProject: boolean;
@@ -2378,12 +2402,20 @@ function GanttView({
           <div className="flex">
             {ticks.map((t, i) => {
               const yearStart = i === 0 || ticks[i - 1]!.year !== t.year;
+              const cap =
+                capacityProject && !compactLabels
+                  ? getWeeklyCapacityPeople(plan, capacityProject, t.year, t.week)
+                  : null;
               return (
                 <div
                   key={t.key}
                   className="border-l border-[var(--card-border)] bg-white px-0.5 py-0.5 text-center tabular-nums"
                   style={{ width: weekPx, minWidth: weekPx }}
-                  title={`${t.year} hafta ${formatWeekOnly(t.week)}`}
+                  title={
+                    cap != null
+                      ? `${t.year} hafta ${formatWeekOnly(t.week)} · kapasite ${cap} kişi`
+                      : `${t.year} hafta ${formatWeekOnly(t.week)}`
+                  }
                 >
                   {yearStart ? (
                     <div className="text-[9px] leading-none text-[var(--accent)]">{t.year}</div>
@@ -2391,6 +2423,15 @@ function GanttView({
                     <div className="h-[9px]" aria-hidden />
                   )}
                   <div className="text-[10px] leading-tight">{formatWeekOnly(t.week)}</div>
+                  {cap != null && (
+                    <div
+                      className={`text-[9px] font-semibold leading-none ${
+                        cap > 4 ? "text-amber-700" : "text-[var(--muted)]"
+                      }`}
+                    >
+                      {cap}k
+                    </div>
+                  )}
                 </div>
               );
             })}
