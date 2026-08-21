@@ -8,6 +8,7 @@ import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
   addDependency,
   addJobToStage,
+  adjustWeeklyCapacitiesByDelta,
   buildWeekTicks,
   clearAllJobProgress,
   clearAllJobs,
@@ -762,17 +763,7 @@ export function GanttPlanner() {
               onChange={(e) => setPlan({ ...plan, startDate: e.target.value })}
               className="h-9 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
             />
-            <button
-              type="button"
-              className="h-5 text-left text-[11px] leading-5 text-[var(--accent)] hover:underline disabled:opacity-40"
-              disabled={!plan.weeklyCapacities.length}
-              onClick={() => {
-                const aligned = earliestCapacityStartDate(plan);
-                if (aligned) setPlan({ ...plan, startDate: aligned });
-              }}
-            >
-              Kapasitenin ilk haftasına hizala
-            </button>
+            <span className="h-5" aria-hidden />
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-xs leading-4 text-[var(--muted)]">Günlük saat</span>
@@ -951,6 +942,52 @@ export function GanttPlanner() {
               >
                 Proje kapasitesini sil
               </button>
+              <button
+                type="button"
+                disabled={sortedCapacities.length === 0}
+                title={
+                  capDeleteProject && capDeleteProject !== "all"
+                    ? `“${capDeleteProject}” tüm haftalarında kişi −1 (Gantt yenilenir)`
+                    : "Listedeki tüm haftalarda kişi −1"
+                }
+                className="h-9 rounded-lg border border-[var(--card-border)] px-3 text-sm font-semibold disabled:opacity-40"
+                onClick={() => {
+                  setPlan((p) =>
+                    adjustWeeklyCapacitiesByDelta(p, capDeleteProject || "all", -1)
+                  );
+                  setCapStatus(
+                    capDeleteProject && capDeleteProject !== "all"
+                      ? `“${capDeleteProject}” kapasitesi −1 kişi.`
+                      : "Tüm kapasiteler −1 kişi."
+                  );
+                  setCapError(false);
+                }}
+              >
+                Haftalar −1
+              </button>
+              <button
+                type="button"
+                disabled={sortedCapacities.length === 0}
+                title={
+                  capDeleteProject && capDeleteProject !== "all"
+                    ? `“${capDeleteProject}” tüm haftalarında kişi +1 (Gantt yenilenir)`
+                    : "Listedeki tüm haftalarda kişi +1"
+                }
+                className="h-9 rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 disabled:opacity-40"
+                onClick={() => {
+                  setPlan((p) =>
+                    adjustWeeklyCapacitiesByDelta(p, capDeleteProject || "all", 1)
+                  );
+                  setCapStatus(
+                    capDeleteProject && capDeleteProject !== "all"
+                      ? `“${capDeleteProject}” kapasitesi +1 kişi.`
+                      : "Tüm kapasiteler +1 kişi."
+                  );
+                  setCapError(false);
+                }}
+              >
+                Haftalar +1
+              </button>
             </div>
             {capStatus && (
               <p className={`text-xs ${capError ? "text-rose-700" : "text-emerald-700"}`}>{capStatus}</p>
@@ -1082,11 +1119,11 @@ export function GanttPlanner() {
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
-                        title="Kişi −1"
-                        className="rounded border border-[var(--card-border)] px-1.5 py-0.5 text-[10px] font-medium"
+                        title="Bu hafta kişi −1 — Gantt yeniden yerleşir"
+                        className="h-8 w-8 rounded border border-[var(--card-border)] text-sm font-semibold"
                         onClick={() =>
-                          setPlan(
-                            upsertWeeklyCapacity(plan, {
+                          setPlan((p) =>
+                            upsertWeeklyCapacity(p, {
                               project: c.project,
                               year: c.year,
                               week: c.week,
@@ -1103,13 +1140,13 @@ export function GanttPlanner() {
                         min={0}
                         step={1}
                         value={c.people}
-                        title="Bu haftanın proje × rol kapasitesi (kişi)"
-                        className="w-12 rounded border border-amber-200 bg-amber-50/70 px-1 py-0.5 text-center tabular-nums text-amber-950 focus:border-[var(--accent)] focus:outline-none"
+                        title="Bu haftanın proje × rol işgücü kapasitesi (kişi). Değişince Gantt yenilenir."
+                        className="h-8 w-14 rounded border border-amber-200 bg-amber-50/70 px-1 text-center text-sm tabular-nums text-amber-950 focus:border-[var(--accent)] focus:outline-none"
                         onChange={(e) => {
                           const people = Math.max(0, Number(e.target.value) || 0);
                           if (people === c.people) return;
-                          setPlan(
-                            upsertWeeklyCapacity(plan, {
+                          setPlan((p) =>
+                            upsertWeeklyCapacity(p, {
                               project: c.project,
                               year: c.year,
                               week: c.week,
@@ -1121,11 +1158,11 @@ export function GanttPlanner() {
                       />
                       <button
                         type="button"
-                        title="Kişi +1"
-                        className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900"
+                        title="Bu hafta kişi +1 — Gantt yeniden yerleşir"
+                        className="h-8 w-8 rounded border border-amber-200 bg-amber-50 text-sm font-semibold text-amber-900"
                         onClick={() =>
-                          setPlan(
-                            upsertWeeklyCapacity(plan, {
+                          setPlan((p) =>
+                            upsertWeeklyCapacity(p, {
                               project: c.project,
                               year: c.year,
                               week: c.week,
@@ -1143,7 +1180,9 @@ export function GanttPlanner() {
                       type="button"
                       className="ml-auto text-xs text-rose-700"
                       onClick={() =>
-                        setPlan(removeWeeklyCapacity(plan, c.project, c.year, c.week, c.role))
+                        setPlan((p) =>
+                          removeWeeklyCapacity(p, c.project, c.year, c.week, c.role)
+                        )
                       }
                     >
                       Sil
@@ -1159,10 +1198,9 @@ export function GanttPlanner() {
               </p>
             ) : null}
             <p className="text-[11px] text-[var(--muted)]">
-              Excel: <strong>proje adı</strong> · <strong>hafta</strong> · <strong>personel tipi</strong> ·{" "}
-              <strong>kişi</strong>. Örn. Donatım=3 → aynı haftada 3 paralel akış (işlerdeki kişi genelde 1).
-              Plan başlangıcı kapasite haftalarıyla uyumlu olmalı. Proje seçip haftalık kişi sayılarını burada
-              değiştirin; Gantt yenilenir.
+              Proje seçin → satırda <strong>− / +</strong> ile o haftanın işgücünü değiştirin veya{" "}
+              <strong>Haftalar ±1</strong> ile seçili projenin tüm haftalarını birden kaydırın. Kapasite
+              değişince Gantt otomatik yeniden yerleşir.
             </p>
           </div>
         </section>

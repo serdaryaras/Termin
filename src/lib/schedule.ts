@@ -407,6 +407,28 @@ export function upsertWeeklyCapacity(
   return next;
 }
 
+/** Seçili projenin (veya tümünün) haftalık kişi kapasitelerini delta kadar kaydırır */
+export function adjustWeeklyCapacitiesByDelta(
+  plan: Plan,
+  project: string,
+  delta: number
+): Plan {
+  const d = Math.round(Number(delta) || 0);
+  if (!d) return plan;
+  const next = clonePlan(plan);
+  const all = !project || project === "all";
+  let changed = false;
+  for (const c of next.weeklyCapacities) {
+    if (!all && (c.project || DEFAULT_PROJECT) !== project) continue;
+    const people = Math.max(0, (Number(c.people) || 0) + d);
+    if (people !== c.people) {
+      c.people = people;
+      changed = true;
+    }
+  }
+  return changed ? next : plan;
+}
+
 /** Kimlik (proje/hafta/tip) değişince eski kaydı silip yenisini yazar */
 export function replaceWeeklyCapacity(
   plan: Plan,
