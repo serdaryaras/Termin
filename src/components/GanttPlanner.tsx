@@ -30,8 +30,6 @@ import {
   jobById,
   moveJobsByDelta,
   moveJobsDir,
-  moveSelectedStage,
-  moveSelectedStageBy,
   moveJobsGroupBefore,
   nextIsoWeek,
   parseIsoDate,
@@ -42,7 +40,6 @@ import {
   replaceWeeklyCapacity,
   scheduledIds,
   setStageGapAfterDays,
-  stageDurationLabel,
   stageGanttWeekRangeLabel,
   successorsOf,
   upsertWeeklyCapacity,
@@ -66,8 +63,6 @@ import {
   type Plan,
   type ProgressPercent,
 } from "@/lib/types";
-
-const PRIORITY_COLS = 5;
 
 /** Tıklama döngüsü: 100 → 75 → 50 → 25 → 0 → 100… */
 const PROGRESS_CYCLE: ProgressPercent[] = [100, 75, 50, 25, 0];
@@ -98,14 +93,6 @@ function progressButtonClass(percent: ProgressPercent | undefined): string {
   if (percent === 50) return "bg-amber-100 text-amber-900 hover:bg-amber-200";
   if (percent === 25) return "bg-orange-100 text-orange-900 hover:bg-orange-200";
   return "bg-rose-100 text-rose-900 hover:bg-rose-200";
-}
-
-/** S-şekli (boustrophedon): tek satır L→R, çift satır R→L */
-function priorityCellPos(si: number, cols = PRIORITY_COLS) {
-  const row = Math.floor(si / cols);
-  const i = si % cols;
-  const col = row % 2 === 0 ? i : cols - 1 - i;
-  return { row, col };
 }
 
 export function GanttPlanner() {
@@ -189,6 +176,48 @@ export function GanttPlanner() {
     };
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab !== "priority") return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      const ids =
+        selectChain.length > 0 ? selectChain : selected ? [selected] : [];
+      if (!ids.length) return;
+
+      const go = (dir: "top" | "bottom" | "up" | "down") => {
+        e.preventDefault();
+        setPlan((p) => moveJobsDir(p, ids, dir));
+        requestAnimationFrame(() => {
+          document.getElementById(`priority-job-${ids[ids.length - 1]}`)?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+        });
+      };
+
+      if (e.key === "ArrowUp") {
+        go(e.shiftKey ? "top" : "up");
+      } else if (e.key === "ArrowDown") {
+        go(e.shiftKey ? "bottom" : "down");
+      } else if (e.key === "Home") {
+        go("top");
+      } else if (e.key === "End") {
+        go("bottom");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeTab, selectChain, selected]);
+
   const gantt = useMemo(() => computeGantt(plan), [plan]);
   const categoryToneMap = useMemo(
     () => buildCategoryToneMap(plan.jobs.map((j) => activityCategory(j.name))),
@@ -203,6 +232,19 @@ export function GanttPlanner() {
     if (selectChain.length) return selectChain;
     return selected ? [selected] : [];
   }, [selectChain, selected]);
+  const selectedStageIndices = useMemo(() => {
+    const idxs: number[] = [];
+    for (const id of linkTargetIds) {
+      const p = findPlacement(plan, id);
+      if (p) idxs.push(p.stageIndex);
+    }
+    return idxs;
+  }, [linkTargetIds, plan]);
+  const canShiftUp =
+    selectedStageIndices.length > 0 && Math.min(...selectedStageIndices) > 0;
+  const canShiftDown =
+    selectedStageIndices.length > 0 &&
+    Math.max(...selectedStageIndices) < plan.stages.length - 1;
   const canClearSelectedLinks = useMemo(() => {
     return linkTargetIds.some(
       (id) => predecessorsOf(plan, id).length > 0 || successorsOf(plan, id).length > 0
@@ -676,14 +718,16 @@ export function GanttPlanner() {
       setSelected(jobId);
       return;
     }
-    if (selected === jobId && selectChain.length <= 1) {
-      setSelected(null);
-      setSelectChain([]);
-      setEditingJobId(null);
-      return;
-    }
-    setSelectChain([jobId]);
-    setSelected(jobId);
+    // Gantt gibi: tıkla = seçime ekle / çıkar
+    setSelectChain((prev) => {
+      if (prev.includes(jobId)) {
+        const next = prev.filter((x) => x !== jobId);
+        setSelected(next.length ? next[next.length - 1]! : null);
+        return next;
+      }
+      setSelected(jobId);
+      return [...prev, jobId];
+    });
   };
 
   const patchJob = (jobId: string, patch: Partial<{ name: string; role: string; hours: number; people: number; project: string }>) => {
@@ -722,24 +766,17 @@ export function GanttPlanner() {
   };
 
   const shiftSelectedBy = (delta: number) => {
-    if (!selected) return;
-    const id = selected;
-    setPlan(moveSelectedStageBy(plan, id, delta));
-    scrollPriorityJobIntoView(id);
+    const ids = linkTargetIds;
+    if (!ids.length) return;
+    setPlan(moveJobsByDelta(plan, ids, delta));
+    scrollPriorityJobIntoView(ids[ids.length - 1]!);
   };
 
   const shiftSelectedDir = (dir: "top" | "bottom" | "up" | "down") => {
-    if (!selected) return;
-    const id = selected;
-    setPlan(moveSelectedStage(plan, id, dir));
-    scrollPriorityJobIntoView(id);
-  };
-
-  const shortJobName = (id: string) => {
-    const j = jobById(plan, id);
-    if (!j) return "?";
-    const n = j.name;
-    return n.length > 22 ? `${n.slice(0, 20)}…` : n;
+    const ids = linkTargetIds;
+    if (!ids.length) return;
+    setPlan(moveJobsDir(plan, ids, dir));
+    scrollPriorityJobIntoView(ids[ids.length - 1]!);
   };
 
   const onDragStart = (jobId: string) => (e: DragEvent) => {
@@ -1478,19 +1515,15 @@ export function GanttPlanner() {
                 onChange={(e) => setPrioritySearch(e.target.value)}
                 placeholder="Aktivite ara…"
                 className="h-9 w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
-                title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
+                title="İsim, rol, proje veya A numarasına göre filtrele; tıkla=çoklu seçim · CTRL=öncül→ardıl · ↑/↓=bir sıra · Shift+↑/↓=üste/alta"
               />
               <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto">
                 {(
                   [
-                    ["Üst", () => shiftSelectedDir("top"), !place],
-                    ["↑", () => shiftSelectedDir("up"), !place || place.stageIndex === 0],
-                    [
-                      "↓",
-                      () => shiftSelectedDir("down"),
-                      !place || place.stageIndex === plan.stages.length - 1,
-                    ],
-                    ["Alt", () => shiftSelectedDir("bottom"), !place],
+                    ["Üst", () => shiftSelectedDir("top"), !linkTargetIds.length],
+                    ["↑", () => shiftSelectedDir("up"), !canShiftUp],
+                    ["↓", () => shiftSelectedDir("down"), !canShiftDown],
+                    ["Alt", () => shiftSelectedDir("bottom"), !linkTargetIds.length],
                   ] as [string, () => void, boolean][]
                 ).map(([label, fn, disabled]) => (
                   <button
@@ -1498,7 +1531,17 @@ export function GanttPlanner() {
                     type="button"
                     disabled={disabled}
                     onClick={fn}
-                    title={label}
+                    title={
+                      label === "Üst"
+                        ? "Shift+↑ · en üste"
+                        : label === "Alt"
+                          ? "Shift+↓ · en alta"
+                          : label === "↑"
+                            ? "↑ · bir sıra yukarı"
+                            : label === "↓"
+                              ? "↓ · bir sıra aşağı"
+                              : label
+                    }
                     className="h-8 w-[4.5rem] shrink-0 rounded border border-[var(--card-border)] text-xs disabled:opacity-40"
                   >
                     {label}
@@ -1506,9 +1549,9 @@ export function GanttPlanner() {
                 ))}
                 {([-20, -10, -1, 1, 10, 20] as const).map((delta) => {
                   const disabled =
-                    !place ||
-                    (delta < 0 && place.stageIndex === 0) ||
-                    (delta > 0 && place.stageIndex >= plan.stages.length - 1);
+                    !linkTargetIds.length ||
+                    (delta < 0 && !canShiftUp) ||
+                    (delta > 0 && !canShiftDown);
                   return (
                     <button
                       key={`shift-bar-${delta}`}
@@ -1516,8 +1559,8 @@ export function GanttPlanner() {
                       disabled={disabled}
                       title={
                         delta > 0
-                          ? `Seçili işi ${delta} sıra aşağı`
-                          : `Seçili işi ${Math.abs(delta)} sıra yukarı`
+                          ? `Seçili iş(ler)i ${delta} sıra aşağı`
+                          : `Seçili iş(ler)i ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
                       className={`h-8 w-[4.5rem] shrink-0 rounded text-xs font-semibold tabular-nums disabled:opacity-40 ${
@@ -1636,149 +1679,104 @@ export function GanttPlanner() {
                   : "Aramaya uyan aktivite yok."}
               </p>
             ) : (
-              <div
-                className="grid w-full gap-x-0.5 gap-y-0"
-                style={{ gridTemplateColumns: `repeat(${PRIORITY_COLS}, minmax(0, 1fr))` }}
-              >
-                {filteredPriorityStages.map(({ si, jobIds }, di) => {
+              <div className="w-full border-t border-[var(--card-border)] bg-white text-xs text-slate-900">
+                {filteredPriorityStages.map(({ si, jobIds }) => {
                   const stage = plan.stages[si];
-                  const { row, col } = priorityCellPos(di);
-                  const next =
-                    di < filteredPriorityStages.length - 1
-                      ? priorityCellPos(di + 1)
-                      : null;
-                  const goesDown = !!next && next.row > row;
-                  const goesRight = !!next && next.row === row && next.col > col;
-                  const goesLeft = !!next && next.row === row && next.col < col;
                   return (
-                  <div
-                    key={`stage-${si}`}
-                    className="relative flex min-w-0 flex-col"
-                    style={{ gridRow: row + 1, gridColumn: col + 1 }}
-                  >
-                    <div className="flex min-w-0 flex-1 items-start gap-0">
-                    <div className="flex w-2.5 shrink-0 items-center justify-center self-center">
-                      {goesLeft ? (
-                        <span
-                          className="text-[9px] leading-none text-[var(--muted)]"
-                          title="Sıradaki (sola)"
-                          aria-hidden
-                        >
-                          ←
-                        </span>
-                      ) : null}
-                    </div>
-                    <div
-                      className={`min-w-0 flex-1 rounded border px-1 py-0.5 ${
-                        overId === `st-${si}` || overId === `ins-${si}`
-                          ? "drop-over"
-                          : "border-[var(--card-border)] bg-[var(--background)]"
-                      }`}
-                      onDragOver={allowDrop(`st-${si}`)}
-                      onDragLeave={() => setOverId(null)}
-                      onDrop={dropJob(si, true)}
-                    >
-                      <div className="mb-0.5 flex items-center justify-between gap-0.5 px-0.5 text-[9px] uppercase tracking-wider text-[var(--muted)]">
-                        <span className="shrink-0">A{si + 1}</span>
-                        <span className="min-w-0 flex-1 truncate px-0.5 text-center tabular-nums font-medium normal-case tracking-normal text-[var(--accent)]">
-                          {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || ""}
-                        </span>
-                        <span className="shrink-0 tabular-nums">{stageDurationLabel(plan, stage)}</span>
-                      </div>
+                    <div key={`stage-${si}`}>
                       {(stage.gapAfterDays ?? 0) > 0 && (
-                        <div
-                          className="mb-0.5 rounded bg-amber-50 px-1 py-0.5 text-center text-[8px] font-medium text-amber-900"
-                          title="Bu aşamadan sonra boşluk — sonraki aktiviteler ötelenir"
-                        >
-                          +{stage.gapAfterDays} iş günü boşluk
+                        <div className="border-b border-[var(--card-border)] bg-amber-50 px-2 py-0.5 text-[9px] font-medium text-amber-900">
+                          A{si + 1} sonrası +{stage.gapAfterDays} iş günü boşluk
+                          {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows)
+                            ? ` · ${stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows)}`
+                            : ""}
                         </div>
                       )}
-                      <div className="space-y-0.5">
-                        {jobIds.map((id) => {
-                          const job = jobById(plan, id);
-                          if (!job) return null;
-                          const preds = predecessorsOf(plan, id);
-                          const succs = successorsOf(plan, id);
-                          const chainIdx = selectChain.indexOf(id);
-                          const inChain = chainIdx >= 0;
-                          const isSelected = selected === id || inChain;
-                          const tone = categoryTone(activityCategory(job.name), categoryToneMap);
-                          const isEditing = editingJobId === id;
-                          return (
-                            <article
-                              key={id}
-                              id={`priority-job-${id}`}
-                              draggable={!isEditing}
-                              onClick={(e) => onPriorityClick(id, e)}
-                              onDragStart={isEditing ? undefined : onDragStart(id)}
-                              style={
-                                isSelected || isEditing
-                                  ? undefined
-                                  : {
-                                      background: tone.bg,
-                                      borderColor: tone.border,
-                                    }
-                              }
-                              className={`relative flex min-w-0 flex-col gap-0 rounded border px-1 py-0.5 ${
-                                isEditing
-                                  ? "cursor-default border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/40 select-text"
-                                  : isSelected
-                                    ? "cursor-grab select-none border-[var(--accent)] bg-[var(--card)] ring-1 ring-[var(--accent)]/30"
-                                    : preds.length || succs.length
-                                      ? "cursor-grab select-none border-amber-400/70"
-                                      : "cursor-grab select-none hover:brightness-[0.98]"
-                              }`}
-                            >
-                              {isEditing ? (
-                                <div
-                                  className="space-y-1 py-0.5"
-                                  onClick={(ev) => ev.stopPropagation()}
-                                  onKeyDown={(ev) => {
-                                    if (ev.key === "Escape") setEditingJobId(null);
-                                  }}
-                                >
-                                  <input
-                                    autoFocus
-                                    value={job.name}
-                                    onChange={(e) => patchJob(id, { name: e.target.value })}
-                                    className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] font-medium"
-                                    placeholder="İş kalemi"
-                                  />
-                                  <div className="grid grid-cols-2 gap-1">
-                                    <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
-                                      Saat
-                                      <input
-                                        type="number"
-                                        min={0.5}
-                                        step={0.5}
-                                        value={job.hours}
-                                        onChange={(e) =>
-                                          patchJob(id, { hours: Number(e.target.value) })
-                                        }
-                                        className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--foreground)]"
-                                      />
-                                    </label>
-                                    <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
-                                      Kişi
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        step={1}
-                                        value={job.people}
-                                        onChange={(e) =>
-                                          patchJob(id, { people: Number(e.target.value) })
-                                        }
-                                        className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--foreground)]"
-                                      />
-                                    </label>
-                                  </div>
+                      {jobIds.map((id) => {
+                        const job = jobById(plan, id);
+                        if (!job) return null;
+                        const preds = predecessorsOf(plan, id);
+                        const succs = successorsOf(plan, id);
+                        const chainIdx = selectChain.indexOf(id);
+                        const inChain = chainIdx >= 0;
+                        const isSelected = selected === id || inChain;
+                        const tone = categoryTone(activityCategory(job.name), categoryToneMap);
+                        const isEditing = editingJobId === id;
+                        return (
+                          <div
+                            key={id}
+                            id={`priority-job-${id}`}
+                            draggable={!isEditing}
+                            onClick={(e) => onPriorityClick(id, e)}
+                            onDragStart={isEditing ? undefined : onDragStart(id)}
+                            onDragOver={allowDrop(`st-${si}`)}
+                            onDragLeave={() => setOverId(null)}
+                            onDrop={dropJob(si, true)}
+                            style={{
+                              background: isSelected
+                                ? "color-mix(in srgb, var(--accent) 14%, white)"
+                                : tone.bg || "#fff",
+                            }}
+                            className={`flex min-w-0 items-stretch border-b border-[var(--card-border)] ${
+                              isEditing
+                                ? "cursor-default ring-1 ring-inset ring-[var(--accent)]/40"
+                                : isSelected
+                                  ? "cursor-grab select-none ring-1 ring-inset ring-[var(--accent)]"
+                                  : preds.length || succs.length
+                                    ? "cursor-grab select-none"
+                                    : "cursor-grab select-none hover:brightness-[0.99]"
+                            } ${overId === `st-${si}` ? "drop-over" : ""}`}
+                            title={`${job.name} · tıkla: seç · CTRL: öncül→ardıl · ↑/↓: kaydır · Shift+↑/↓: üste/alta · Shift+tık: düzenle`}
+                          >
+                            {isEditing ? (
+                              <div
+                                className="w-full space-y-1 px-2 py-1.5"
+                                onClick={(ev) => ev.stopPropagation()}
+                                onKeyDown={(ev) => {
+                                  if (ev.key === "Escape") setEditingJobId(null);
+                                }}
+                              >
+                                <input
+                                  autoFocus
+                                  value={job.name}
+                                  onChange={(e) => patchJob(id, { name: e.target.value })}
+                                  className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[11px] font-medium"
+                                  placeholder="İş kalemi"
+                                />
+                                <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                                  <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                    Saat
+                                    <input
+                                      type="number"
+                                      min={0.5}
+                                      step={0.5}
+                                      value={job.hours}
+                                      onChange={(e) =>
+                                        patchJob(id, { hours: Number(e.target.value) })
+                                      }
+                                      className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums"
+                                    />
+                                  </label>
+                                  <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
+                                    Kişi
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={job.people}
+                                      onChange={(e) =>
+                                        patchJob(id, { people: Number(e.target.value) })
+                                      }
+                                      className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] tabular-nums"
+                                    />
+                                  </label>
                                   <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
                                     Personel
                                     <input
                                       list="priority-roles"
                                       value={job.role}
                                       onChange={(e) => patchJob(id, { role: e.target.value })}
-                                      className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
+                                      className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
                                     />
                                   </label>
                                   <label className="flex flex-col gap-0.5 text-[8px] text-[var(--muted)]">
@@ -1787,143 +1785,67 @@ export function GanttPlanner() {
                                       list="priority-projects"
                                       value={job.project || ""}
                                       onChange={(e) => patchJob(id, { project: e.target.value })}
-                                      className="w-full rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
+                                      className="rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px]"
                                     />
                                   </label>
-                                  <div className="flex justify-end gap-1 pt-0.5">
-                                    <button
-                                      type="button"
-                                      className="rounded bg-[var(--accent)] px-2 py-0.5 text-[10px] text-white"
-                                      onClick={() => setEditingJobId(null)}
-                                    >
-                                      Tamam
-                                    </button>
-                                  </div>
                                 </div>
-                              ) : (
-                                <>
-                              <div className="flex items-center gap-0.5">
-                                {inChain && (
-                                  <span
-                                    className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[8px] font-bold text-white"
-                                    title={`Seçim sırası ${chainIdx + 1}`}
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    className="rounded bg-[var(--accent)] px-2 py-0.5 text-[10px] text-white"
+                                    onClick={() => setEditingJobId(null)}
                                   >
-                                    {chainIdx + 1}
-                                  </span>
-                                )}
-                                <h3
-                                  className="min-w-0 flex-1 truncate text-[10px] font-medium leading-tight"
-                                  title={`${job.name} · Shift+tık ile düzenle`}
-                                >
-                                  {job.name}
-                                </h3>
-                                <button
-                                  type="button"
-                                  title="İşi kalıcı sil"
-                                  className="no-print shrink-0 px-0.5 text-[10px] leading-none text-[var(--muted)] hover:text-rose-700"
-                                  onClick={(ev) => {
-                                    ev.stopPropagation();
-                                    if (!confirm(`“${job.name}” silinsin mi?`)) return;
-                                    setPlan(deleteJob(plan, id));
-                                    setSelectChain((c) => c.filter((x) => x !== id));
-                                    if (selected === id) setSelected(null);
-                                    if (editingJobId === id) setEditingJobId(null);
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              </div>
-                              <div className="flex items-baseline justify-between gap-1 text-[9px]">
-                                <span className="truncate text-[var(--muted)]" title={job.role}>
-                                  {job.role}
-                                </span>
-                                <span className="shrink-0 tabular-nums text-[var(--accent)]">
-                                  {formatHours(job.hours)}
-                                </span>
-                              </div>
-                              {(preds.length > 0 || succs.length > 0) && (
-                                <div className="mt-0.5 space-y-0.5 border-t border-[var(--card-border)]/60 pt-0.5">
-                                  {preds.map((pid) => (
-                                    <div
-                                      key={`p-${pid}`}
-                                      className="flex items-center gap-1 text-[8px] leading-tight text-amber-800"
-                                    >
-                                      <span className="shrink-0 rounded bg-amber-100 px-0.5 font-semibold uppercase tracking-wide">
-                                        Öncül
-                                      </span>
-                                      <span className="min-w-0 truncate" title={shortJobName(pid)}>
-                                        ← {shortJobName(pid)}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        className="no-print ml-auto shrink-0 text-[var(--muted)] hover:text-rose-700"
-                                        title="Bağı kaldır"
-                                        onClick={(ev) => {
-                                          ev.stopPropagation();
-                                          setPlan(removeDependency(plan, pid, id));
-                                        }}
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  ))}
-                                  {succs.map((sid) => (
-                                    <div
-                                      key={`s-${sid}`}
-                                      className="flex items-center gap-1 text-[8px] leading-tight text-sky-800"
-                                    >
-                                      <span className="shrink-0 rounded bg-sky-100 px-0.5 font-semibold uppercase tracking-wide">
-                                        Ardıl
-                                      </span>
-                                      <span className="min-w-0 truncate" title={shortJobName(sid)}>
-                                        → {shortJobName(sid)}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        className="no-print ml-auto shrink-0 text-[var(--muted)] hover:text-rose-700"
-                                        title="Bağı kaldır"
-                                        onClick={(ev) => {
-                                          ev.stopPropagation();
-                                          setPlan(removeDependency(plan, id, sid));
-                                        }}
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  ))}
+                                    Tamam
+                                  </button>
                                 </div>
-                              )}
-                                </>
-                              )}
-                            </article>
-                          );
-                        })}
-                      </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex min-w-0 flex-1 items-center gap-1 truncate whitespace-nowrap px-2 py-0.5 text-[11px]">
+                                  {inChain && selectChain.length > 1 ? (
+                                    <span className="mr-0.5 inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[8px] font-bold text-white">
+                                      {chainIdx + 1}
+                                    </span>
+                                  ) : null}
+                                  <span className="min-w-0 truncate">
+                                    <span className="mr-1.5 tabular-nums text-[var(--muted)]">
+                                      A{si + 1}
+                                    </span>
+                                    {job.name}
+                                    {(preds.length > 0 || succs.length > 0) && (
+                                      <span className="ml-1 text-[9px] text-amber-700">
+                                        {preds.length ? `←${preds.length}` : ""}
+                                        {succs.length ? ` →${succs.length}` : ""}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1 px-2 py-0.5">
+                                  <span className="text-[10px] tabular-nums text-slate-900">
+                                    {formatHours(job.hours)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    title="İşi kalıcı sil"
+                                    className="no-print px-0.5 text-[10px] leading-none text-[var(--muted)] hover:text-rose-700"
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      if (!confirm(`“${job.name}” silinsin mi?`)) return;
+                                      setPlan(deleteJob(plan, id));
+                                      setSelectChain((c) => c.filter((x) => x !== id));
+                                      if (selected === id) setSelected(null);
+                                      if (editingJobId === id) setEditingJobId(null);
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div className="flex w-2.5 shrink-0 items-center justify-center self-center">
-                      {goesRight ? (
-                        <span
-                          className="text-[9px] leading-none text-[var(--muted)]"
-                          title="Sıradaki (sağa)"
-                          aria-hidden
-                        >
-                          →
-                        </span>
-                      ) : null}
-                    </div>
-                    </div>
-                    <div className="flex h-2.5 shrink-0 items-start justify-center">
-                      {goesDown ? (
-                        <span
-                          className="text-[9px] leading-none text-[var(--muted)]"
-                          title="Alt satıra geç"
-                          aria-hidden
-                        >
-                          ↓
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
                   );
                 })}
               </div>
