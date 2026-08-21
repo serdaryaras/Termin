@@ -11,6 +11,11 @@ export type Job = {
 
 export type Stage = {
   jobIds: string[];
+  /**
+   * Bu aşamadan sonra (aşama bitince) sonraki aktivitelerin
+   * en erken başlangıcına eklenecek iş günü boşluğu / öteleme.
+   */
+  gapAfterDays?: number;
 };
 
 /** Bitiş-başlangıç (FS): ardıl, öncül bitmeden başlamaz */
@@ -321,7 +326,18 @@ export function normalizePlan(data: Partial<Plan> | null | undefined): Plan {
     startDate: data.startDate || base.startDate,
     hoursPerDay: Number(data.hoursPerDay) || 8,
     jobs,
-    stages: Array.isArray(data.stages) ? data.stages : [],
+    stages: Array.isArray(data.stages)
+      ? data.stages
+          .filter((s) => s && Array.isArray(s.jobIds))
+          .map((s) => {
+            const gap = Number((s as Stage).gapAfterDays);
+            return {
+              jobIds: s.jobIds.filter((id) => jobIds.has(String(id))).map(String),
+              ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+            };
+          })
+          .filter((s) => s.jobIds.length > 0)
+      : [],
     dependencies,
     resourceGroups: Array.isArray(data.resourceGroups) ? data.resourceGroups : [],
     weeklyCapacities,

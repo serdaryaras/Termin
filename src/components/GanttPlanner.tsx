@@ -40,6 +40,7 @@ import {
   removeWeeklyCapacity,
   replaceWeeklyCapacity,
   scheduledIds,
+  setStageGapAfterDays,
   stageDurationLabel,
   stageGanttWeekRangeLabel,
   successorsOf,
@@ -1370,6 +1371,25 @@ export function GanttPlanner() {
                 })}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1">
+                <label
+                  className="flex items-center gap-1 rounded border border-[var(--card-border)] bg-[var(--background)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]"
+                  title="Seçili aşamadan sonra N iş günü boşluk; sonraki aktiviteler ötelenir"
+                >
+                  Boşluk
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    disabled={!place}
+                    value={place ? plan.stages[place.stageIndex]?.gapAfterDays ?? 0 : 0}
+                    onChange={(e) => {
+                      if (!place) return;
+                      setPlan(setStageGapAfterDays(plan, place.stageIndex, Number(e.target.value)));
+                    }}
+                    className="h-6 w-12 rounded border border-[var(--card-border)] bg-[var(--card)] px-1 text-[11px] tabular-nums text-[var(--foreground)] disabled:opacity-40"
+                  />
+                  <span className="whitespace-nowrap">iş günü</span>
+                </label>
                 <button
                   type="button"
                   disabled={!canClearSelectedLinks}
@@ -1504,6 +1524,14 @@ export function GanttPlanner() {
                         </span>
                         <span className="shrink-0 tabular-nums">{stageDurationLabel(plan, stage)}</span>
                       </div>
+                      {(stage.gapAfterDays ?? 0) > 0 && (
+                        <div
+                          className="mb-0.5 rounded bg-amber-50 px-1 py-0.5 text-center text-[8px] font-medium text-amber-900"
+                          title="Bu aşamadan sonra boşluk — sonraki aktiviteler ötelenir"
+                        >
+                          +{stage.gapAfterDays} iş günü boşluk
+                        </div>
+                      )}
                       <div className="space-y-0.5">
                         {jobIds.map((id) => {
                           const job = jobById(plan, id);
@@ -2003,6 +2031,7 @@ export function GanttPlanner() {
                     <th className="px-2 py-2 font-medium">Aktivite</th>
                     <th className="px-2 py-2 font-medium">Proje</th>
                     <th className="px-2 py-2 font-medium">Rol</th>
+                    <th className="px-2 py-2 font-medium">Saat / süre</th>
                     <th className="px-2 py-2 font-medium">İlerleme</th>
                     <th className="px-2 py-2 font-medium">Takılma / neden</th>
                   </tr>
@@ -2017,6 +2046,7 @@ export function GanttPlanner() {
                         p.year === trackWeekParts.year &&
                         p.week === trackWeekParts.week
                     );
+                    const hpd = plan.hoursPerDay || 8;
                     return (
                       <tr
                         key={`${jobId}-${trackWeekParts.year}-${trackWeekParts.week}`}
@@ -2029,6 +2059,35 @@ export function GanttPlanner() {
                         <td className="px-2 py-2 font-medium leading-snug">{job.name}</td>
                         <td className="px-2 py-2 text-[var(--muted)]">{job.project}</td>
                         <td className="px-2 py-2 text-[var(--muted)]">{job.role}</td>
+                        <td className="px-2 py-2">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <input
+                              type="number"
+                              min={0.5}
+                              step={0.5}
+                              value={job.hours}
+                              title="Aktivite süresi (saat). Uzatınca Gantt yeniden planlanır."
+                              onChange={(e) => patchJob(jobId, { hours: Number(e.target.value) })}
+                              className="w-16 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-xs tabular-nums"
+                            />
+                            <button
+                              type="button"
+                              title={`+1 iş günü (+${hpd} saat)`}
+                              onClick={() => patchJob(jobId, { hours: job.hours + hpd })}
+                              className="rounded border border-[var(--card-border)] px-1.5 py-1 text-[10px] font-medium"
+                            >
+                              +1g
+                            </button>
+                            <button
+                              type="button"
+                              title={`+5 iş günü (+${hpd * 5} saat)`}
+                              onClick={() => patchJob(jobId, { hours: job.hours + hpd * 5 })}
+                              className="rounded border border-amber-200 bg-amber-50 px-1.5 py-1 text-[10px] font-medium text-amber-900"
+                            >
+                              +5g
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-2 py-2">
                           <button
                             type="button"

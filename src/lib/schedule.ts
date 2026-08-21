@@ -40,7 +40,13 @@ function clonePlan(plan: Plan): Plan {
   return {
     ...plan,
     jobs: plan.jobs.map((j) => ({ ...j })),
-    stages: plan.stages.map((s) => ({ jobIds: [...s.jobIds] })),
+    stages: plan.stages.map((s) => {
+      const gap = Number(s.gapAfterDays);
+      return {
+        jobIds: [...s.jobIds],
+        ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+      };
+    }),
     dependencies: (plan.dependencies || []).map((d) => ({ ...d })),
     resourceGroups: plan.resourceGroups.map((g) => ({ ...g })),
     weeklyCapacities: plan.weeklyCapacities.map((c) => ({ ...c })),
@@ -160,7 +166,15 @@ export function addJobToStage(plan: Plan, jobId: string, stageIndex: number, asN
 
 export function removeFromSchedule(plan: Plan, jobId: string): Plan {
   let next = clonePlan(plan);
-  next.stages = prune(next.stages.map((s) => ({ jobIds: s.jobIds.filter((id) => id !== jobId) })));
+  next.stages = prune(
+    next.stages.map((s) => {
+      const gap = Number(s.gapAfterDays);
+      return {
+        jobIds: s.jobIds.filter((id) => id !== jobId),
+        ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+      };
+    })
+  );
   next = clearDependenciesForJob(next, jobId);
   return next;
 }
@@ -188,7 +202,13 @@ export function clearWeeklyCapacitiesForProject(plan: Plan, project: string): Pl
 
 function moveStage(stages: Stage[], from: number, to: number): Stage[] {
   if (from === to || from < 0 || to < 0 || from >= stages.length) return stages;
-  const copy = stages.map((s) => ({ jobIds: [...s.jobIds] }));
+  const copy = stages.map((s) => {
+    const gap = Number(s.gapAfterDays);
+    return {
+      jobIds: [...s.jobIds],
+      ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+    };
+  });
   const [row] = copy.splice(from, 1);
   const insert = to > from ? to - 1 : to;
   const clamped = Math.max(0, Math.min(insert, copy.length));
@@ -215,7 +235,14 @@ export function moveJobsGroupBefore(plan: Plan, jobIds: string[], targetJobId: s
   ].sort((a, b) => a - b);
   if (!stagesToMove.length) return plan;
 
-  const extracted = stagesToMove.map((i) => ({ jobIds: [...next.stages[i]!.jobIds] }));
+  const extracted = stagesToMove.map((i) => {
+    const s = next.stages[i]!;
+    const gap = Number(s.gapAfterDays);
+    return {
+      jobIds: [...s.jobIds],
+      ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+    };
+  });
   for (let k = stagesToMove.length - 1; k >= 0; k--) {
     next.stages.splice(stagesToMove[k]!, 1);
   }
@@ -292,13 +319,30 @@ export function moveJobsDir(
   if (!reps.length) return plan;
   const next = clonePlan(plan);
   const indices = reps.map((r) => r.stageIndex).sort((a, b) => a - b);
-  const block = indices.map((i) => ({ jobIds: [...next.stages[i]!.jobIds] }));
+  const block = indices.map((i) => {
+    const s = next.stages[i]!;
+    const gap = Number(s.gapAfterDays);
+    return {
+      jobIds: [...s.jobIds],
+      ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+    };
+  });
   const remaining = next.stages.filter((_, i) => !indices.includes(i));
   if (dir === "top") {
     next.stages = [...block, ...remaining];
   } else {
     next.stages = [...remaining, ...block];
   }
+  return next;
+}
+
+/** Seçili aşamadan sonra N iş günü boşluk (sonraki tüm aktiviteleri öteleyebilir) */
+export function setStageGapAfterDays(plan: Plan, stageIndex: number, days: number): Plan {
+  if (stageIndex < 0 || stageIndex >= plan.stages.length) return plan;
+  const next = clonePlan(plan);
+  const gap = Math.max(0, Math.round(Number(days) || 0));
+  if (gap > 0) next.stages[stageIndex]!.gapAfterDays = gap;
+  else delete next.stages[stageIndex]!.gapAfterDays;
   return next;
 }
 
@@ -722,7 +766,23 @@ export function computeGantt(plan: Plan): GanttModel {
 
   const categoryTones = buildCategoryToneMap(plan.jobs.map((j) => activityCategory(j.name)));
 
+  let currentStage = 0;
+  let stageMaxEnd = 0;
+  let forcedEarliest = 0;
+
   for (const { job, stage } of ordered) {
+    if (stage !== currentStage) {
+      if (currentStage > 0) {
+        const prev = plan.stages[currentStage - 1];
+        const gap = Math.max(0, Math.round(Number(prev?.gapAfterDays) || 0));
+        if (gap > 0) {
+          forcedEarliest = Math.max(forcedEarliest, Math.ceil(stageMaxEnd - 1e-9) + gap);
+        }
+      }
+      currentStage = stage;
+      stageMaxEnd = 0;
+    }
+
     const project = job.project || DEFAULT_PROJECT;
     const role = normalizeRole(job.role);
     const people = jobPeople(job);
@@ -737,7 +797,7 @@ export function computeGantt(plan: Plan): GanttModel {
       );
     }
 
-    let earliest = 0;
+    let earliest = forcedEarliest;
     for (const predId of predecessorsOf(plan, job.id)) {
       const predEnd = endByJob.get(predId);
       if (predEnd == null) {
@@ -773,6 +833,7 @@ export function computeGantt(plan: Plan): GanttModel {
 
     const endDay = dayIndex(startDay) + durationDays;
     endByJob.set(job.id, endDay);
+    stageMaxEnd = Math.max(stageMaxEnd, endDay);
 
     if (!roleColors.has(role)) {
       roleColors.set(role, BAR_COLORS[colorI % BAR_COLORS.length]);
