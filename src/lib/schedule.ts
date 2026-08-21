@@ -1,8 +1,8 @@
 import {
   activityCategory,
   BAR_COLORS,
+  buildCategoryToneMap,
   capacityKey,
-  categoryTone,
   DEFAULT_PROJECT,
   emptyPlan,
   normalizeRole,
@@ -629,6 +629,8 @@ export function computeGantt(plan: Plan): GanttModel {
   let maxEndDay = 0;
   let totalHours = 0;
 
+  const categoryTones = buildCategoryToneMap(plan.jobs.map((j) => activityCategory(j.name)));
+
   for (const { job, stage } of ordered) {
     const project = job.project || DEFAULT_PROJECT;
     const role = normalizeRole(job.role);
@@ -687,7 +689,12 @@ export function computeGantt(plan: Plan): GanttModel {
     }
 
     const category = activityCategory(job.name);
-    const tone = categoryTone(category);
+    const tone = categoryTones.get(category) ?? {
+      label: "none",
+      bar: roleColors.get(role)!,
+      bg: "#f8fafc",
+      border: "#e2e8f0",
+    };
     if (category && !categoryColors.has(category)) {
       categoryColors.set(category, tone.bar);
     }

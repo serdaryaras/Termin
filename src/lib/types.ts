@@ -124,7 +124,7 @@ export function activityCategory(name: string): string {
   return (matches[matches.length - 1]![1] || "").trim();
 }
 
-/** Cyan, sarı, mavi ve uyumlu pastel tonlar */
+/** Cyan, sarı, mavi ve ayırt edilebilir pastel tonlar */
 export const CATEGORY_PALETTE: ReadonlyArray<{
   label: string;
   bar: string;
@@ -141,45 +141,74 @@ export const CATEGORY_PALETTE: ReadonlyArray<{
   { label: "lime", bar: "#65a30d", bg: "#f7fee7", border: "#bef264" },
   { label: "violet", bar: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
   { label: "rose", bar: "#e11d48", bg: "#fff1f2", border: "#fda4af" },
+  { label: "orange", bar: "#ea580c", bg: "#fff7ed", border: "#fdba74" },
+  { label: "fuchsia", bar: "#c026d3", bg: "#fdf4ff", border: "#f0abfc" },
+  { label: "emerald", bar: "#059669", bg: "#ecfdf5", border: "#6ee7b7" },
+  { label: "red", bar: "#dc2626", bg: "#fef2f2", border: "#fca5a5" },
+  { label: "slate", bar: "#475569", bg: "#f1f5f9", border: "#cbd5e1" },
+  { label: "pink", bar: "#db2777", bg: "#fdf2f8", border: "#f9a8d4" },
 ];
 
-const CATEGORY_PREF: Record<string, number> = {
-  ARRGMNT: 0,
-  ARRANGEMENT: 0,
-  ARRANGE: 0,
-  STRUCT: 1,
-  STRUCTURE: 1,
-  STEEL: 1,
-  PIPE: 2,
-  PIPING: 2,
-  HVAC: 3,
-  ELEC: 4,
-  ELECTRICAL: 4,
-  OUTFIT: 5,
-  OUTFITTING: 5,
-  PAINT: 6,
-  INSUL: 7,
-  INSULATION: 7,
+export type CategoryTone = {
+  label: string;
+  bar: string;
+  bg: string;
+  border: string;
 };
 
-function hashCategory(key: string): number {
-  let h = 0;
-  const s = key.toLocaleUpperCase("tr");
-  for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0;
-  return h;
+const EMPTY_TONE: CategoryTone = {
+  label: "none",
+  bar: "#64748b",
+  bg: "#f8fafc",
+  border: "#e2e8f0",
+};
+
+/** Palet dışı kategoriler için altın açı ile benzersiz HSL tonu */
+export function categoryToneAt(index: number): CategoryTone {
+  if (index >= 0 && index < CATEGORY_PALETTE.length) {
+    return CATEGORY_PALETTE[index]!;
+  }
+  const hue = Math.round((index * 137.508) % 360);
+  return {
+    label: `hue-${hue}`,
+    bar: `hsl(${hue} 70% 42%)`,
+    bg: `hsl(${hue} 85% 94%)`,
+    border: `hsl(${hue} 70% 75%)`,
+  };
 }
 
-export type CategoryTone = (typeof CATEGORY_PALETTE)[number];
+/**
+ * Her benzersiz kategoriye farklı renk — alfabetik sırayla paletten,
+ * taşınca HSL üretir (çarpışma yok).
+ */
+export function buildCategoryToneMap(categories: Iterable<string>): Map<string, CategoryTone> {
+  const unique = [
+    ...new Set(
+      [...categories]
+        .map((c) => String(c || "").trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b, "tr"));
+  const map = new Map<string, CategoryTone>();
+  unique.forEach((cat, i) => {
+    map.set(cat, categoryToneAt(i));
+  });
+  return map;
+}
 
-export function categoryTone(category: string): CategoryTone {
+export function categoryTone(
+  category: string,
+  toneMap?: Map<string, CategoryTone>
+): CategoryTone {
   const key = (category || "").trim();
-  if (!key) {
-    return { label: "none", bar: "#64748b", bg: "#f8fafc", border: "#e2e8f0" };
-  }
-  const pref = CATEGORY_PREF[key.toLocaleUpperCase("en-US")] ?? CATEGORY_PREF[key.toLocaleUpperCase("tr")];
-  const idx =
-    pref != null ? pref % CATEGORY_PALETTE.length : hashCategory(key) % CATEGORY_PALETTE.length;
-  return CATEGORY_PALETTE[idx]!;
+  if (!key) return EMPTY_TONE;
+  if (toneMap?.has(key)) return toneMap.get(key)!;
+  // Harita yoksa tekil çağrı: yine çarpışmasız olmasa da sabit hash yerine
+  // tek kategoriyi paletin ilkine bağlama — harita tercih edilir.
+  return categoryToneAt(
+    [...key].reduce((h, ch) => (h * 33 + ch.charCodeAt(0)) >>> 0, 0) %
+      Math.max(CATEGORY_PALETTE.length * 3, 1)
+  );
 }
 
 export function todayIso(): string {

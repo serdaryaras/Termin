@@ -48,6 +48,7 @@ import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/s
 import {
   DEFAULT_PROJECT,
   activityCategory,
+  buildCategoryToneMap,
   categoryTone,
   emptyPlan,
   jobKey,
@@ -176,6 +177,10 @@ export function GanttPlanner() {
   }, [activeTab]);
 
   const gantt = useMemo(() => computeGantt(plan), [plan]);
+  const categoryToneMap = useMemo(
+    () => buildCategoryToneMap(plan.jobs.map((j) => activityCategory(j.name))),
+    [plan.jobs]
+  );
   const place = selected ? findPlacement(plan, selected) : null;
   const linkTargetIds = useMemo(() => {
     if (selectChain.length) return selectChain;
@@ -1434,7 +1439,7 @@ export function GanttPlanner() {
                           const chainIdx = selectChain.indexOf(id);
                           const inChain = chainIdx >= 0;
                           const isSelected = selected === id || inChain;
-                          const tone = categoryTone(activityCategory(job.name));
+                          const tone = categoryTone(activityCategory(job.name), categoryToneMap);
                           const isEditing = editingJobId === id;
                           return (
                             <article
