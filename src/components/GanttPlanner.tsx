@@ -47,9 +47,41 @@ import {
   normalizeRole,
   ROLE_OPTIONS,
   type Plan,
+  type ProgressPercent,
 } from "@/lib/types";
 
 const PRIORITY_COLS = 4;
+
+/** Tıklama döngüsü: 100 → 75 → 50 → 25 → 0 → 100… */
+const PROGRESS_CYCLE: ProgressPercent[] = [100, 75, 50, 25, 0];
+
+function nextProgressPercent(current: ProgressPercent | undefined): ProgressPercent {
+  if (current == null) return 100;
+  const i = PROGRESS_CYCLE.indexOf(current);
+  return PROGRESS_CYCLE[(i < 0 ? 0 : i + 1) % PROGRESS_CYCLE.length];
+}
+
+function parseTrackWeekLabel(raw: string): { year: number; week: number } | null {
+  const m = String(raw)
+    .trim()
+    .match(/^(\d{4})\s*[-./,]\s*(\d{1,2})$/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const week = Number(m[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(week) || week < 1 || week > 53) return null;
+  return { year, week };
+}
+
+function progressButtonClass(percent: ProgressPercent | undefined): string {
+  if (percent == null) {
+    return "border border-dashed border-[var(--card-border)] bg-[var(--background)] text-[var(--muted)]";
+  }
+  if (percent === 100) return "bg-emerald-100 text-emerald-900 hover:bg-emerald-200";
+  if (percent === 75) return "bg-sky-100 text-sky-900 hover:bg-sky-200";
+  if (percent === 50) return "bg-amber-100 text-amber-900 hover:bg-amber-200";
+  if (percent === 25) return "bg-orange-100 text-orange-900 hover:bg-orange-200";
+  return "bg-rose-100 text-rose-900 hover:bg-rose-200";
+}
 
 /** S-şekli (boustrophedon): tek satır L→R, çift satır R→L */
 function priorityCellPos(si: number, cols = PRIORITY_COLS) {
@@ -80,7 +112,11 @@ export function GanttPlanner() {
   const [overId, setOverId] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState("");
   const [pdfCompact, setPdfCompact] = useState(false);
-  const [activeTab, setActiveTab] = useState<"jobs" | "priority" | "gantt">("jobs");
+  const [activeTab, setActiveTab] = useState<"jobs" | "priority" | "gantt" | "track">("jobs");
+  const [trackWeek, setTrackWeek] = useState(() => {
+    const { year, week } = getIsoWeekParts(new Date());
+    return formatWeekLabel(year, week);
+  });
   const loaded = useRef(false);
   const dragRef = useRef<{ jobId: string } | null>(null);
   const ganttExportRef = useRef<HTMLDivElement | null>(null);
@@ -156,6 +192,62 @@ export function GanttPlanner() {
       return a.week - b.week;
     });
   }, [plan.weeklyCapacities]);
+
+  const trackWeekParts = useMemo(() => parseTrackWeekLabel(trackWeek), [trackWeek]);
+
+  const trackRows = useMemo(() => {
+    const rows: { jobId: string; stageIndex: number; seq: number }[] = [];
+    let seq = 0;
+    plan.stages.forEach((stage, stageIndex) => {
+      for (const jobId of stage.jobIds) {
+        const job = jobById(plan, jobId);
+        if (!job) continue;
+        if (projectFilter !== "all" && (job.project || DEFAULT_PROJECT) !== projectFilter) continue;
+        seq += 1;
+        rows.push({ jobId, stageIndex, seq });
+      }
+    });
+    return rows;
+  }, [plan, projectFilter]);
+
+  const cycleTrackProgress = useCallback(
+    (jobId: string) => {
+      if (!trackWeekParts) return;
+      const { year, week } = trackWeekParts;
+      setPlan((prev) => {
+        const list = [...(prev.jobProgress || [])];
+        const idx = list.findIndex((p) => p.jobId === jobId && p.year === year && p.week === week);
+        if (idx < 0) {
+          list.push({ jobId, year, week, percent: 100, reason: "" });
+        } else {
+          list[idx] = {
+            ...list[idx],
+            percent: nextProgressPercent(list[idx].percent),
+          };
+        }
+        return { ...prev, jobProgress: list };
+      });
+    },
+    [trackWeekParts]
+  );
+
+  const setTrackReason = useCallback(
+    (jobId: string, reason: string) => {
+      if (!trackWeekParts) return;
+      const { year, week } = trackWeekParts;
+      setPlan((prev) => {
+        const list = [...(prev.jobProgress || [])];
+        const idx = list.findIndex((p) => p.jobId === jobId && p.year === year && p.week === week);
+        if (idx < 0) {
+          list.push({ jobId, year, week, percent: 0, reason });
+        } else {
+          list[idx] = { ...list[idx], reason };
+        }
+        return { ...prev, jobProgress: list };
+      });
+    },
+    [trackWeekParts]
+  );
 
   const importPaste = (text: string) => {
     const { rows, skipped } = parseExcelText(text);
@@ -406,6 +498,7 @@ export function GanttPlanner() {
             ["jobs", "İş listesi & kapasite", plan.jobs.length],
             ["priority", "Öncelik sırası", plan.stages.length],
             ["gantt", "Gantt çizelgesi", filteredGantt.rows.length],
+            ["track", "Takip", trackRows.length],
           ] as const
         ).map(([id, label, count]) => (
           <button
@@ -1352,6 +1445,114 @@ export function GanttPlanner() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === "track" && (
+        <section className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider">Haftalık takip</h2>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                İlerleme düğmesine tıklayın: %100 → %75 → %50 → %25 → %0. Takılan işlere neden yazın.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-[var(--muted)]">Takip haftası</span>
+                <input
+                  type="text"
+                  value={trackWeek}
+                  onChange={(e) => setTrackWeek(e.target.value)}
+                  placeholder="2026-35"
+                  className="h-9 w-32 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm tabular-nums"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-[var(--muted)]">Proje</span>
+                <select
+                  value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}
+                  className="h-9 min-w-[160px] rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-3 text-sm"
+                >
+                  <option value="all">Tüm projeler</option>
+                  {projects.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {!trackWeekParts ? (
+            <p className="py-6 text-sm text-rose-700">Hafta biçimi geçersiz. Örnek: 2026-35</p>
+          ) : trackRows.length === 0 ? (
+            <p className="py-8 text-sm text-[var(--muted)]">
+              Öncelik sırasına iş eklenince burada haftalık takip listesi görünür.
+            </p>
+          ) : (
+            <div className="overflow-auto">
+              <table className="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--card-border)] text-left text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                    <th className="px-2 py-2 font-medium">Sıra</th>
+                    <th className="px-2 py-2 font-medium">Aktivite</th>
+                    <th className="px-2 py-2 font-medium">Proje</th>
+                    <th className="px-2 py-2 font-medium">Rol</th>
+                    <th className="px-2 py-2 font-medium">İlerleme</th>
+                    <th className="px-2 py-2 font-medium">Takılma / neden</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trackRows.map(({ jobId, stageIndex, seq }) => {
+                    const job = jobById(plan, jobId);
+                    if (!job) return null;
+                    const entry = (plan.jobProgress || []).find(
+                      (p) =>
+                        p.jobId === jobId &&
+                        p.year === trackWeekParts.year &&
+                        p.week === trackWeekParts.week
+                    );
+                    return (
+                      <tr
+                        key={`${jobId}-${trackWeekParts.year}-${trackWeekParts.week}`}
+                        className="border-b border-[var(--card-border)]/70 align-top"
+                      >
+                        <td className="px-2 py-2 tabular-nums text-[var(--muted)]">
+                          A{stageIndex + 1}
+                          <span className="ml-1 text-[10px]">#{seq}</span>
+                        </td>
+                        <td className="px-2 py-2 font-medium leading-snug">{job.name}</td>
+                        <td className="px-2 py-2 text-[var(--muted)]">{job.project}</td>
+                        <td className="px-2 py-2 text-[var(--muted)]">{job.role}</td>
+                        <td className="px-2 py-2">
+                          <button
+                            type="button"
+                            title="Tıklayarak ilerlemeyi değiştir"
+                            onClick={() => cycleTrackProgress(jobId)}
+                            className={`min-w-[4.5rem] rounded-md px-2.5 py-1.5 text-xs font-semibold tabular-nums ${progressButtonClass(entry?.percent)}`}
+                          >
+                            {entry?.percent == null ? "—" : `%${entry.percent}`}
+                          </button>
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            type="text"
+                            value={entry?.reason ?? ""}
+                            placeholder="Takılma nedeni…"
+                            onChange={(e) => setTrackReason(jobId, e.target.value)}
+                            className="w-full min-w-[12rem] rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2.5 py-1.5 text-xs"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

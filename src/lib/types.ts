@@ -19,6 +19,17 @@ export type Dependency = {
   successorId: string;
 };
 
+/** Haftalık aktivite ilerleme takibi (%25 dilimler) */
+export type ProgressPercent = 0 | 25 | 50 | 75 | 100;
+
+export type JobWeekProgress = {
+  jobId: string;
+  year: number;
+  week: number;
+  percent: ProgressPercent;
+  reason: string;
+};
+
 /** Eski rol kapasitesi — yedek; asıl kısıt haftalık proje kapasitesidir */
 export type ResourceGroup = {
   role: string;
@@ -45,6 +56,8 @@ export type Plan = {
   dependencies: Dependency[];
   resourceGroups: ResourceGroup[];
   weeklyCapacities: ProjectWeekCapacity[];
+  /** Aktivite × ISO hafta ilerleme ve takılma nedeni */
+  jobProgress: JobWeekProgress[];
 };
 
 export type ParsedRow = {
@@ -121,6 +134,7 @@ export function emptyPlan(): Plan {
     dependencies: [],
     resourceGroups: [],
     weeklyCapacities: [],
+    jobProgress: [],
   };
 }
 
@@ -158,6 +172,27 @@ function normalizeCapacity(raw: Partial<ProjectWeekCapacity>): ProjectWeekCapaci
   };
 }
 
+const PROGRESS_PERCENTS: ProgressPercent[] = [0, 25, 50, 75, 100];
+
+function normalizeJobProgress(
+  raw: Partial<JobWeekProgress>,
+  jobIds: Set<string>
+): JobWeekProgress | null {
+  if (!raw || !raw.jobId || !jobIds.has(String(raw.jobId))) return null;
+  const year = Number(raw.year);
+  const week = Number(raw.week);
+  const percent = Number(raw.percent) as ProgressPercent;
+  if (!Number.isFinite(year) || !Number.isFinite(week) || week < 1 || week > 53) return null;
+  if (!PROGRESS_PERCENTS.includes(percent)) return null;
+  return {
+    jobId: String(raw.jobId),
+    year,
+    week,
+    percent,
+    reason: raw.reason != null ? String(raw.reason) : "",
+  };
+}
+
 export function normalizePlan(data: Partial<Plan> | null | undefined): Plan {
   const base = emptyPlan();
   if (!data) return base;
@@ -182,6 +217,11 @@ export function normalizePlan(data: Partial<Plan> | null | undefined): Plan {
           successorId: String(d.successorId),
         }))
     : [];
+  const jobProgress = Array.isArray(data.jobProgress)
+    ? data.jobProgress
+        .map((p) => normalizeJobProgress(p, jobIds))
+        .filter((p): p is JobWeekProgress => Boolean(p))
+    : [];
   return {
     name: data.name || base.name,
     startDate: data.startDate || base.startDate,
@@ -191,6 +231,7 @@ export function normalizePlan(data: Partial<Plan> | null | undefined): Plan {
     dependencies,
     resourceGroups: Array.isArray(data.resourceGroups) ? data.resourceGroups : [],
     weeklyCapacities,
+    jobProgress,
   };
 }
 

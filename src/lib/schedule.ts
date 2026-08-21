@@ -41,6 +41,7 @@ function clonePlan(plan: Plan): Plan {
     dependencies: (plan.dependencies || []).map((d) => ({ ...d })),
     resourceGroups: plan.resourceGroups.map((g) => ({ ...g })),
     weeklyCapacities: plan.weeklyCapacities.map((c) => ({ ...c })),
+    jobProgress: (plan.jobProgress || []).map((p) => ({ ...p })),
   };
 }
 

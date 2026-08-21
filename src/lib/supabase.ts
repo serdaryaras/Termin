@@ -56,6 +56,7 @@ type PlanRow = {
   dependencies?: Plan["dependencies"];
   resource_groups?: Plan["resourceGroups"];
   weekly_capacities?: Plan["weeklyCapacities"];
+  job_progress?: Plan["jobProgress"];
 };
 
 export async function loadPlan(): Promise<{ plan: Plan; source: "supabase" | "local" | "empty"; error?: string }> {
@@ -69,7 +70,9 @@ export async function loadPlan(): Promise<{ plan: Plan; source: "supabase" | "lo
   try {
     const { data, error } = await supabase
       .from("gantt_plans")
-      .select("name,start_date,hours_per_day,jobs,stages,dependencies,resource_groups,weekly_capacities")
+      .select(
+        "name,start_date,hours_per_day,jobs,stages,dependencies,resource_groups,weekly_capacities,job_progress"
+      )
       .eq("slug", PLAN_SLUG)
       .maybeSingle();
 
@@ -94,6 +97,7 @@ export async function loadPlan(): Promise<{ plan: Plan; source: "supabase" | "lo
         dependencies: Array.isArray(row.dependencies) ? row.dependencies : [],
         resourceGroups: Array.isArray(row.resource_groups) ? row.resource_groups : [],
         weeklyCapacities: Array.isArray(row.weekly_capacities) ? row.weekly_capacities : [],
+        jobProgress: Array.isArray(row.job_progress) ? row.job_progress : [],
       }),
       source: "supabase",
     };
@@ -118,6 +122,7 @@ export async function savePlan(plan: Plan): Promise<{ ok: boolean; message?: str
     dependencies: plan.dependencies || [],
     resource_groups: plan.resourceGroups,
     weekly_capacities: plan.weeklyCapacities,
+    job_progress: plan.jobProgress || [],
     updated_at: new Date().toISOString(),
   };
 

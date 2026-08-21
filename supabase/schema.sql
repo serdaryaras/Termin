@@ -11,6 +11,7 @@ create table if not exists public.gantt_plans (
   resource_groups jsonb not null default '[]'::jsonb,
   weekly_capacities jsonb not null default '[]'::jsonb,
   dependencies jsonb not null default '[]'::jsonb,
+  job_progress jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
@@ -22,6 +23,9 @@ alter table public.gantt_plans
 
 alter table public.gantt_plans
   add column if not exists dependencies jsonb not null default '[]'::jsonb;
+
+alter table public.gantt_plans
+  add column if not exists job_progress jsonb not null default '[]'::jsonb;
 
 insert into public.gantt_plans (slug, name)
 values ('default', 'İş planı')
