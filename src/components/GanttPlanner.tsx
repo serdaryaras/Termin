@@ -1319,7 +1319,7 @@ export function GanttPlanner() {
                 className="h-9 w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
                 title="İsim, rol, proje veya A numarasına göre filtrele; kaydırma ve CTRL+bağ filtreliyken de çalışır"
               />
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
+              <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto">
                 {(
                   [
                     ["Üst", () => shiftSelectedDir("top"), !place],
@@ -1338,7 +1338,7 @@ export function GanttPlanner() {
                     disabled={disabled}
                     onClick={fn}
                     title={label}
-                    className="h-9 w-[5.5rem] shrink-0 rounded border border-[var(--card-border)] text-sm disabled:opacity-40"
+                    className="h-8 w-9 shrink-0 rounded border border-[var(--card-border)] text-xs disabled:opacity-40"
                   >
                     {label}
                   </button>
@@ -1359,7 +1359,7 @@ export function GanttPlanner() {
                           : `Seçili işi ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
-                      className={`h-9 w-[5.5rem] shrink-0 rounded text-sm font-semibold tabular-nums disabled:opacity-40 ${
+                      className={`h-8 w-9 shrink-0 rounded text-xs font-semibold tabular-nums disabled:opacity-40 ${
                         delta > 0
                           ? "bg-amber-100 text-amber-900"
                           : "bg-sky-100 text-sky-900"
@@ -2070,6 +2070,22 @@ export function GanttPlanner() {
                               onChange={(e) => patchJob(jobId, { hours: Number(e.target.value) })}
                               className="w-16 rounded-lg border border-[var(--card-border)] bg-[var(--background)] px-2 py-1 text-xs tabular-nums"
                             />
+                            <button
+                              type="button"
+                              title={`−1 iş günü (−${hpd} saat)`}
+                              onClick={() => patchJob(jobId, { hours: job.hours - hpd })}
+                              className="rounded border border-[var(--card-border)] px-1.5 py-1 text-[10px] font-medium"
+                            >
+                              −1g
+                            </button>
+                            <button
+                              type="button"
+                              title={`−5 iş günü (−${hpd * 5} saat)`}
+                              onClick={() => patchJob(jobId, { hours: job.hours - hpd * 5 })}
+                              className="rounded border border-sky-200 bg-sky-50 px-1.5 py-1 text-[10px] font-medium text-sky-900"
+                            >
+                              −5g
+                            </button>
                             <button
                               type="button"
                               title={`+1 iş günü (+${hpd} saat)`}
