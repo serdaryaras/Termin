@@ -37,6 +37,7 @@ import {
   replaceWeeklyCapacity,
   scheduledIds,
   stageDurationLabel,
+  stageGanttWeekRangeLabel,
   successorsOf,
   upsertWeeklyCapacity,
   weekIndexFromPlanStart,
@@ -1279,8 +1280,11 @@ export function GanttPlanner() {
                       onDrop={dropJob(si, true)}
                     >
                       <div className="mb-0.5 flex items-center justify-between gap-1 px-0.5 text-[10px] uppercase tracking-wider text-[var(--muted)]">
-                        <span>A{si + 1}</span>
-                        <span className="tabular-nums">{stageDurationLabel(plan, stage)}</span>
+                        <span className="shrink-0">A{si + 1}</span>
+                        <span className="min-w-0 flex-1 truncate px-1 text-center tabular-nums font-medium normal-case tracking-normal text-[var(--accent)]">
+                          {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || ""}
+                        </span>
+                        <span className="shrink-0 tabular-nums">{stageDurationLabel(plan, stage)}</span>
                       </div>
                       <div className="space-y-0.5">
                         {stage.jobIds.map((id) => {
@@ -1531,7 +1535,7 @@ export function GanttPlanner() {
             Sıralama oluştukça çizelge burada üretilir. Zaman ekseni proje başlangıç haftasından başlar.
           </p>
         ) : (
-          <div className="overflow-auto">
+          <div className="max-h-[calc(100vh-11rem)] overflow-auto">
             <div ref={ganttExportRef} className="inline-block min-w-full bg-white p-2 text-slate-900">
               {pdfCompact && (
                 <div className="mb-3 flex items-center gap-3 border-b border-slate-200 pb-3">
@@ -1758,8 +1762,9 @@ function GanttView({
 
   return (
     <div className="inline-block min-w-[780px] bg-white text-xs text-slate-900">
+        <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-white shadow-[0_1px_0_0_var(--card-border)]">
         <div
-          className="grid items-stretch border-b border-[var(--card-border)] bg-[var(--background)] font-semibold"
+          className="grid items-stretch bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
           <div style={{ gridColumn: `span ${labelSpan}` }} />
@@ -1767,7 +1772,7 @@ function GanttView({
             {bands.map((b) => (
               <div
                 key={b.year}
-                className="border-l border-[var(--card-border)] px-1 py-1.5 text-center text-[var(--accent)]"
+                className="border-l border-[var(--card-border)] bg-white px-1 py-1.5 text-center text-[var(--accent)]"
                 style={{ width: b.count * weekPx, minWidth: b.count * weekPx }}
               >
                 {b.year}
@@ -1776,22 +1781,22 @@ function GanttView({
           </div>
         </div>
         <div
-          className="grid items-center border-b border-[var(--card-border)] bg-[var(--background)] font-semibold"
+          className="grid items-center border-t border-[var(--card-border)] bg-white font-semibold"
           style={{ gridTemplateColumns: `${labelCols} 1fr` }}
         >
-          <div className="px-2 py-2">İş kalemi</div>
+          <div className="bg-white px-2 py-2">İş kalemi</div>
           {!compactLabels && (
             <>
-              <div className="px-2 py-2">Proje</div>
-              <div className="px-2 py-2">Personel</div>
-              <div className="px-2 py-2">Saat</div>
+              <div className="bg-white px-2 py-2">Proje</div>
+              <div className="bg-white px-2 py-2">Personel</div>
+              <div className="bg-white px-2 py-2">Saat</div>
             </>
           )}
           <div className="flex">
             {ticks.map((t) => (
               <div
                 key={t.key}
-                className="border-l border-[var(--card-border)] px-0.5 py-1.5 text-center tabular-nums text-[10px]"
+                className="border-l border-[var(--card-border)] bg-white px-0.5 py-1.5 text-center tabular-nums text-[10px]"
                 style={{ width: weekPx, minWidth: weekPx }}
                 title={`${t.year} hafta ${formatWeekOnly(t.week)}`}
               >
@@ -1799,6 +1804,7 @@ function GanttView({
               </div>
             ))}
           </div>
+        </div>
         </div>
         {sections.map((section) => (
           <div key={section.project || "all"}>

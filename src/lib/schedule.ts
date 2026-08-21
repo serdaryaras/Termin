@@ -716,6 +716,48 @@ export function stageDurationLabel(plan: Plan, stage: Stage): string {
   return `${(days / WORK_DAYS_PER_WEEK).toFixed(1)} hf`;
 }
 
+/** Gantt yerleşimine göre hafta aralığı: 2026-35 veya 2026-35/36 */
+export function formatGanttSpanWeeks(
+  planStartIso: string,
+  startDay: number,
+  durationDays: number
+): string | null {
+  if (!Number.isFinite(startDay) || !Number.isFinite(durationDays) || durationDays <= 0) return null;
+  const startOff = Math.max(0, Math.floor(startDay / WORK_DAYS_PER_WEEK));
+  const endOff = Math.max(
+    startOff,
+    Math.floor((startDay + durationDays - 1e-9) / WORK_DAYS_PER_WEEK)
+  );
+  const a = isoWeekAtOffset(planStartIso, startOff);
+  const b = isoWeekAtOffset(planStartIso, endOff);
+  const aw = String(a.week).padStart(2, "0");
+  const bw = String(b.week).padStart(2, "0");
+  if (a.year === b.year) {
+    if (a.week === b.week) return `${a.year}-${aw}`;
+    return `${a.year}-${aw}/${bw}`;
+  }
+  return `${a.year}-${aw}/${b.year}-${bw}`;
+}
+
+/** Aşamadaki işlerin Gantt birleşik hafta aralığı; satır yoksa null */
+export function stageGanttWeekRangeLabel(
+  planStartIso: string,
+  stage: Stage,
+  ganttRows: GanttRow[]
+): string | null {
+  const ids = new Set(stage.jobIds);
+  const rows = ganttRows.filter((r) => ids.has(r.job.id));
+  if (!rows.length) return null;
+  let minStart = Infinity;
+  let maxEnd = -Infinity;
+  for (const r of rows) {
+    minStart = Math.min(minStart, r.startDay);
+    maxEnd = Math.max(maxEnd, r.startDay + r.durationDays);
+  }
+  if (!Number.isFinite(minStart) || !(maxEnd > minStart)) return null;
+  return formatGanttSpanWeeks(planStartIso, minStart, maxEnd - minStart);
+}
+
 export function addDaysLabel(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00`);
   d.setDate(d.getDate() + Math.floor(days));
