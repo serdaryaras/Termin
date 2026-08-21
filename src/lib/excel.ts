@@ -4,6 +4,7 @@ import {
   normalizeRole,
   ROLE_OPTIONS,
   type ParsedCapacityRow,
+  type ParsedJobImport,
   type ParsedRow,
 } from "./types";
 
@@ -71,7 +72,6 @@ function looksLikeProjectName(raw: string): boolean {
   const t = String(raw || "").trim();
   if (!t || looksLikeActivityCode(t)) return false;
   if (/simonsen|proje|project/i.test(t)) return true;
-  // 252.Simonsen / P252 — sayı + harf, üçüncü sayısal segment yok
   if (/^\d+[./]\s*[A-Za-zÀ-ÿğüşıöçĞÜŞİÖÇ]/.test(t)) return true;
   return false;
 }
@@ -100,18 +100,178 @@ function splitClipboardLine(line: string): string[] {
   return [line.trim()];
 }
 
-export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: number } {
-  const lines = String(text)
-    .replace(/^\uFEFF/, "")
-    .split(/\r\n|\n|\r/)
-    .map((l) => l.replace(/\u00a0/g, " ").trimEnd())
-    .filter((l) => l.trim());
+/** Hücre: `Donatım:25` → rol + saat */
+export function parseRoleHoursCell(raw: string): { role: string; hours: number } | null {
+  const t = String(raw || "").trim();
+  if (!t) return null;
+  const m = t.match(/^(.+?)\s*[:：]\s*([\d.,]+)\s*(?:sa|saat|h|hr|hrs)?\s*$/i);
+  if (!m) return null;
+  const hours = parseHours(m[2]);
+  if (!Number.isFinite(hours)) return null;
+  const role = normalizeRole(m[1]!.trim());
+  if (!role || role === "Belirtilmedi") return null;
+  return { role, hours };
+}
 
-  if (!lines.length) return { rows: [], skipped: 0 };
+/** `252.100.104-Fire Integrity…` → kod + başlık */
+export function splitDrawingLabel(raw: string): { code: string; title: string } | null {
+  const t = String(raw || "").trim();
+  const m = t.match(/^(\d+(?:\.\d+)+)\s*[-–—]\s*(.+)$/);
+  if (!m) return null;
+  const code = m[1]!.trim();
+  const title = m[2]!.trim();
+  if (!code || !title) return null;
+  return { code, title };
+}
 
+function looksLikeCategoryHeader(raw: string): boolean {
+  const h = normalizeHeader(raw);
+  if (!h) return false;
+  if (parseRoleHoursCell(raw)) return false;
+  if (looksLikeActivityCode(raw)) return false;
+  // Class, 3D Model, ISO, Arrang'nt, Works'p, Manual, …
+  if (
+    /^(class|sinif|sınıf|3d|model|iso|arrang|arrangement|duzen|düzen|work|workshop|atolye|atölye|manual|kilavuz|kılavuz)/.test(
+      h
+    )
+  ) {
+    return true;
+  }
+  // Kısa başlık; proje/resim sütun etiketi değil
+  if (/^(proje|project|resim|cizim|çizim|drawing|job|is|iş)/.test(h)) return false;
+  return h.length <= 24 && !/^\d/.test(h);
+}
+
+function sanitizeCategoryToken(header: string): string {
+  return String(header || "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function buildActivityName(code: string, category: string, title: string): string {
+  return `${code}.${sanitizeCategoryToken(category)}-${title}`;
+}
+
+/**
+ * Başlık satırı: [Proje Adı] | Class | 3D Model | ISO | …
+ * İlk hücre proje adı (veya "Proje Adı" etiketi → proje sonradan doldurulur).
+ */
+function detectMatrixHeader(cols: string[]): { project: string; categories: string[] } | null {
+  if (cols.length < 2) return null;
+  const cats = cols.slice(1);
+  if (!cats.length) return null;
+  const asHeaders = cats.filter((c) => c && looksLikeCategoryHeader(c));
+  const asCells = cats.filter((c) => parseRoleHoursCell(c));
+  if (asHeaders.length < 1 || asCells.length > 0) return null;
+
+  let project = (cols[0] || "").trim();
+  const h = normalizeHeader(project);
+  // Sütun başlığı yazılmışsa (Proje Adı / Resim …) — proje değeri değil
+  if (
+    project &&
+    /^(proje|project|resim|cizim|çizim|drawing|job|is adi|is ad|iş adi|iş ad)/.test(h) &&
+    !looksLikeProjectName(project)
+  ) {
+    project = "";
+  }
+
+  return {
+    project,
+    categories: cats.map((c, i) => sanitizeCategoryToken(c) || `Kategori${i + 1}`),
+  };
+}
+
+/** Veri satırı: resim adı | Donatım:25 | … */
+function looksLikeMatrixDataRow(cols: string[]): boolean {
+  if (cols.length < 2) return false;
+  if (!splitDrawingLabel(cols[0] || "") && !looksLikeActivityCode(cols[0] || "")) return false;
+  return cols.slice(1).some((c) => parseRoleHoursCell(c));
+}
+
+function parseMatrixExcelText(lines: string[]): ParsedJobImport {
+  const first = splitClipboardLine(lines[0]!);
+  const header = detectMatrixHeader(first);
+  let projectFromHeader = "";
+  let categoryHeaders: string[] = [];
+  let start = 0;
+
+  if (header) {
+    projectFromHeader = header.project;
+    categoryHeaders = header.categories;
+    start = 1;
+  } else {
+    const sample = lines.map(splitClipboardLine).find(looksLikeMatrixDataRow) || first;
+    const n = Math.max(0, sample.length - 1);
+    categoryHeaders = Array.from({ length: n }, (_, i) => `Kategori${i + 1}`);
+  }
+
+  const rows: ParsedRow[] = [];
+  const dependencies: ParsedJobImport["dependencies"] = [];
+  let skipped = 0;
+
+  for (let i = start; i < lines.length; i++) {
+    const cols = splitClipboardLine(lines[i]!);
+    if (!cols.some((c) => c.trim())) {
+      skipped += 1;
+      continue;
+    }
+    const drawingRaw = (cols[0] || "").trim();
+    const split = splitDrawingLabel(drawingRaw);
+    if (!split) {
+      skipped += 1;
+      continue;
+    }
+
+    const project = projectFromHeader || DEFAULT_PROJECT;
+    const chain: ParsedRow[] = [];
+    for (let c = 0; c < categoryHeaders.length; c++) {
+      const cell = cols[c + 1];
+      const parsed = parseRoleHoursCell(cell || "");
+      if (!parsed) continue;
+      const category = categoryHeaders[c] || `Kategori${c + 1}`;
+      chain.push({
+        name: buildActivityName(split.code, category, split.title),
+        project,
+        role: parsed.role,
+        hours: parsed.hours,
+        people: 1,
+      });
+    }
+
+    if (!chain.length) {
+      skipped += 1;
+      continue;
+    }
+
+    for (const row of chain) rows.push(row);
+    for (let k = 0; k < chain.length - 1; k++) {
+      const pred = chain[k]!;
+      const succ = chain[k + 1]!;
+      dependencies.push({
+        predecessor: { project: pred.project, name: pred.name },
+        successor: { project: succ.project, name: succ.name },
+      });
+    }
+  }
+
+  return { rows, dependencies, skipped, format: "matrix" };
+}
+
+function isMatrixClipboard(lines: string[]): boolean {
+  if (!lines.length) return false;
+  const first = splitClipboardLine(lines[0]!);
+  if (detectMatrixHeader(first)) return true;
+  let hits = 0;
+  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+    if (looksLikeMatrixDataRow(splitClipboardLine(lines[i]!))) hits += 1;
+  }
+  return hits >= 1 && first.length >= 2;
+}
+
+function parseFlatExcelText(lines: string[]): ParsedJobImport {
   let map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
   let start = 0;
-  const first = splitClipboardLine(lines[0]);
+  const first = splitClipboardLine(lines[0]!);
   const kinds = first.map(headerKind);
   if (kinds.some(Boolean) && kinds.filter(Boolean).length >= 2) {
     map = { name: -1, project: -1, role: -1, hours: -1, people: -1 };
@@ -123,11 +283,9 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
     const c0 = first[0] || "";
     const c1 = first[1] || "";
     const c2 = first[2] || "";
-    // Aktivite | personel tipi | saat | kişi
     if (looksLikeActivityCode(c0) && (looksLikeRoleCell(c1) || !looksLikeProjectName(c0))) {
       map = { name: 0, project: -1, role: 1, hours: 2, people: 3 };
     } else if (looksLikeProjectName(c0) || (!looksLikeActivityCode(c0) && looksLikeRoleCell(c2))) {
-      // Proje | iş kalemi | personel tipi | saat
       map = { project: 0, name: 1, role: 2, hours: 3, people: first.length >= 5 ? 4 : -1 };
     } else if (looksLikeRoleCell(c1) && Number.isFinite(parseHours(c2))) {
       map = { name: 0, project: -1, role: 1, hours: 2, people: 3 };
@@ -137,11 +295,9 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
   } else if (first.length === 3) {
     const c0 = first[0] || "";
     const c1 = first[1] || "";
-    // Aktivite | personel tipi | saat  (252.100.101-... | Donatım | 25)
     if (looksLikeActivityCode(c0) || looksLikeRoleCell(c1)) {
       map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
     } else if (looksLikeProjectName(c0)) {
-      // Proje | kalem | saat
       map = { project: 0, name: 1, role: -1, hours: 2, people: -1 };
     } else {
       map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
@@ -155,11 +311,10 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
   const rows: ParsedRow[] = [];
   let skipped = 0;
   for (let i = start; i < lines.length; i++) {
-    const cols = splitClipboardLine(lines[i]);
+    const cols = splitClipboardLine(lines[i]!);
     let name = (map.name >= 0 ? cols[map.name] : cols[0] || "").trim();
     let project = (map.project >= 0 ? cols[map.project] : "").trim();
     let role = (map.role >= 0 ? cols[map.role] : "").trim();
-    // Yanlış eşlemede WBS proje kolonuna düşmüşse düzelt
     if (looksLikeActivityCode(project) && !looksLikeActivityCode(name)) {
       const swap = name;
       name = project;
@@ -191,7 +346,69 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
       people,
     });
   }
-  return { rows, skipped };
+  return { rows, dependencies: [], skipped, format: "flat" };
+}
+
+/**
+ * Excel / panodan iş listesi.
+ * Matris: satır1 = ProjeAdı | Class | 3D Model | ISO | …
+ *         alt satırlar = resim (kod-ad) | Donatım:25 | …
+ */
+export function parseExcelText(text: string): ParsedJobImport {
+  const lines = String(text)
+    .replace(/^\uFEFF/, "")
+    .split(/\r\n|\n|\r/)
+    .map((l) => l.replace(/\u00a0/g, " ").trimEnd())
+    .filter((l) => l.trim());
+
+  if (!lines.length) return { rows: [], dependencies: [], skipped: 0, format: "flat" };
+
+  if (isMatrixClipboard(lines)) return parseMatrixExcelText(lines);
+  return parseFlatExcelText(lines);
+}
+
+/** .xlsx / .xls / .csv dosyasını okuyup TSV metne çevirir (ilk sayfa) */
+export async function readSpreadsheetFileToTsv(file: File): Promise<{ text: string; sheetName: string }> {
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")) {
+    const text = await file.text();
+    return { text: text.replace(/\r\n/g, "\n").trim(), sheetName: file.name };
+  }
+
+  const XLSX = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", cellDates: false, raw: false });
+  const sheetName = wb.SheetNames[0] || "";
+  if (!sheetName) throw new Error("Excel dosyasında sayfa bulunamadı.");
+  const ws = wb.Sheets[sheetName];
+  if (!ws) throw new Error(`Sayfa okunamadı: ${sheetName}`);
+
+  // Ham 2D dizi — boş hücreleri koru (kategori boşlukları önemli)
+  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(ws, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+    raw: false,
+  }) as unknown as unknown[][];
+
+  const text = rows
+    .map((row) => {
+      const cells = Array.isArray(row) ? row : [];
+      return cells
+        .map((c) => String(c ?? "").replace(/\s+/g, " ").trim())
+        .join("\t");
+    })
+    .filter((line) => line.replace(/\t/g, "").trim())
+    .join("\n");
+
+  return { text, sheetName };
+}
+
+/** Dosyadan iş listesi matrisini parse et */
+export async function parseJobListFile(file: File): Promise<ParsedJobImport & { sheetName: string }> {
+  const { text, sheetName } = await readSpreadsheetFileToTsv(file);
+  const parsed = parseExcelText(text);
+  return { ...parsed, sheetName };
 }
 
 type CapKind = "project" | "year" | "week" | "role" | "people";

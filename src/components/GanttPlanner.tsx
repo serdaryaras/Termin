@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import { clipboardToText, looksLikeActivityCode, parseCapacityText, parseExcelText } from "@/lib/excel";
+import { clipboardToText, looksLikeActivityCode, parseCapacityText, parseExcelText, parseJobListFile } from "@/lib/excel";
 import { exportElementToPdf } from "@/lib/export-pdf";
 import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
@@ -554,14 +554,17 @@ export function GanttPlanner() {
     );
   }, [plan, supabaseOn]);
 
-  const importPaste = (text: string) => {
-    const { rows, skipped } = parseExcelText(text);
+  const applyJobImport = (
+    parsed: ReturnType<typeof parseExcelText>,
+    sourceLabel?: string
+  ) => {
+    const { rows, skipped, dependencies: depSpecs, format } = parsed;
     if (!rows.length) {
       setPasteError(true);
       setPasteStatus(
         skipped
-          ? `${skipped} satır okunamadı. Sütunlar: proje, iş kalemi, personel tipi, saat.`
-          : "Yapıştırılacak satır bulunamadı."
+          ? `${skipped} satır okunamadı. Beklenen: 1. satır ProjeAdı|Class|3D Model|ISO|… · alt satırlar resim|Donatım:25|…`
+          : "İçe aktarılacak satır bulunamadı."
       );
       return;
     }
@@ -571,13 +574,17 @@ export function GanttPlanner() {
       projects[0] ||
       DEFAULT_PROJECT;
     const jobs = [...plan.jobs];
-    const stages = plan.stages.map((s) => ({ jobIds: [...s.jobIds] }));
+    const stages = plan.stages.map((s) => ({
+      jobIds: [...s.jobIds],
+      ...(s.gapAfterDays ? { gapAfterDays: s.gapAfterDays } : {}),
+    }));
     const byKey = new Map(jobs.map((j) => [jobKey(j.project || DEFAULT_PROJECT, j.name), j]));
     const scheduled = scheduledIds({ ...plan, stages });
     let added = 0;
     let queued = 0;
     let dup = 0;
     let filledProject = 0;
+    let linked = 0;
 
     rows.forEach((row) => {
       let project = (row.project || "").trim();
@@ -600,6 +607,15 @@ export function GanttPlanner() {
         byKey.set(key, job);
         added += 1;
       } else {
+        job = {
+          ...job,
+          role: row.role || job.role,
+          hours: row.hours || job.hours,
+          people: row.people || job.people,
+        };
+        const idx = jobs.findIndex((j) => j.id === job!.id);
+        if (idx >= 0) jobs[idx] = job;
+        byKey.set(key, job);
         dup += 1;
       }
       if (!scheduled.has(job.id)) {
@@ -609,15 +625,57 @@ export function GanttPlanner() {
       }
     });
 
-    setPlan({ ...plan, jobs, stages });
+    let planDraft = { ...plan, jobs, stages, dependencies: [...(plan.dependencies || [])] };
+    for (const link of depSpecs) {
+      const predProject =
+        !link.predecessor.project ||
+        link.predecessor.project === DEFAULT_PROJECT ||
+        looksLikeActivityCode(link.predecessor.project)
+          ? fallbackProject
+          : link.predecessor.project;
+      const succProject =
+        !link.successor.project ||
+        link.successor.project === DEFAULT_PROJECT ||
+        looksLikeActivityCode(link.successor.project)
+          ? fallbackProject
+          : link.successor.project;
+      const pred = byKey.get(jobKey(predProject, link.predecessor.name));
+      const succ = byKey.get(jobKey(succProject, link.successor.name));
+      if (!pred || !succ) continue;
+      const before = planDraft.dependencies.length;
+      planDraft = addDependency(planDraft, pred.id, succ.id);
+      if (planDraft.dependencies.length > before) linked += 1;
+    }
+
+    setPlan(planDraft);
     setPasteError(queued === 0 && added === 0);
     const bits: string[] = [];
-    if (queued) bits.push(`${queued} kalem sıraya eklendi (yapıştırma sırası)`);
-    if (added && added !== queued) bits.push(`${added} yeni iş tanımı`);
+    if (sourceLabel) bits.push(sourceLabel);
+    if (format === "matrix") bits.push("matris formatı");
+    if (queued) bits.push(`${queued} aktivite sıraya eklendi`);
+    if (added && added !== queued) bits.push(`${added} yeni tanım`);
+    if (linked) bits.push(`${linked} kategori FS bağı`);
     if (filledProject) bits.push(`proje: ${fallbackProject}`);
-    if (dup && queued < rows.length) bits.push(`${rows.length - queued} zaten sırada / tekrar`);
+    if (dup && queued < rows.length) bits.push(`${dup} mevcut güncellendi / tekrar`);
     if (skipped) bits.push(`${skipped} satır atlandı`);
     setPasteStatus((bits.join(" · ") || "Değişiklik yok") + ".");
+  };
+
+  const importPaste = (text: string) => {
+    applyJobImport(parseExcelText(text));
+  };
+
+  const importJobFile = async (file: File | null) => {
+    if (!file) return;
+    setPasteError(false);
+    setPasteStatus(`Okunuyor: ${file.name}…`);
+    try {
+      const parsed = await parseJobListFile(file);
+      applyJobImport(parsed, `${file.name}${parsed.sheetName ? ` · ${parsed.sheetName}` : ""}`);
+    } catch (err) {
+      setPasteError(true);
+      setPasteStatus(err instanceof Error ? err.message : "Excel dosyası okunamadı.");
+    }
   };
 
   const importCapacity = (text: string) => {
@@ -944,7 +1002,7 @@ export function GanttPlanner() {
         </header>
 
         <div className="grid w-full gap-4 lg:grid-cols-2">
-        <section className="section-card section-card--tone-0 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
+        <section className="section-card section-card--tone-0 order-2 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] lg:order-2">
           <div className="section-card__header flex items-baseline justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wider">
             <span>Kapasite</span>
             <span className="normal-case tracking-normal text-[var(--muted)]">
@@ -1365,57 +1423,58 @@ export function GanttPlanner() {
           </div>
         </section>
 
-        <section className="section-card section-card--tone-0 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
+        <section className="section-card section-card--tone-0 order-1 min-w-0 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card)] lg:order-1">
           <div className="section-card__header flex items-baseline justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wider">
             <span>İş listesi</span>
             <span className="normal-case tracking-normal text-[var(--muted)]">Aktarım</span>
           </div>
 
           <div className="no-print space-y-3 border-b border-[var(--card-border)] p-4">
-            <label className="flex flex-wrap justify-between gap-2 text-sm font-semibold">
-              Excel’den yapıştır
-              <span className="font-normal text-[var(--muted)]">Proje · kalem · personel tipi · saat</span>
-            </label>
-            <textarea
-              rows={4}
-              value={pasteText}
-              placeholder={
-                "iş kalemi\tpersonel tipi\tsaat\n252.100.101-General Arrangement\tDonatım\t25\n\nveya:\nproje\tiş kalemi\tpersonel tipi\tsaat\n252.Simonsen\tBorulama\tDonatım\t40"
-              }
-              onChange={(e) => setPasteText(e.target.value)}
-              onPaste={(e) => {
-                const text = clipboardToText(
-                  e.clipboardData.getData("text/plain"),
-                  e.clipboardData.getData("text/html")
-                );
-                if (!text) return;
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <label className="text-sm font-semibold">Excel dosyası yükle</label>
+              <span className="text-[11px] font-normal text-[var(--muted)]">
+                .xlsx · .xls · .csv · ilk sayfa
+              </span>
+            </div>
+            <label
+              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] px-4 py-6 text-center hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
+              onDragOver={(e) => {
                 e.preventDefault();
-                setPasteText(text);
-                importPaste(text);
+                e.stopPropagation();
               }}
-              className="w-full rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] p-3 text-sm"
-            />
-            <p className="text-[11px] text-[var(--muted)]">
-              Proje adı kapasiteyle aynı olmalı (ör. <strong>252.Simonsen</strong>). Eksikse seçili / kapasite projesi kullanılır.
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => importPaste(pasteText)}
-                className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm text-white hover:bg-[var(--accent-hover)]"
-              >
-                Sıraya aktar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPasteText("");
-                  setPasteStatus("");
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.dataTransfer.files?.[0] || null;
+                void importJobFile(file);
+              }}
+            >
+              <span className="text-sm font-medium text-[var(--foreground)]">
+                Dosya seç veya buraya sürükle
+              </span>
+              <span className="text-[11px] text-[var(--muted)]">
+                1. satır: Proje adı · Class · 3D Model · ISO · … · alt satırlar: resim adı · Donatım:25
+              </span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  void importJobFile(file);
+                  e.target.value = "";
                 }}
-                className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-sm"
-              >
-                Alanı temizle
-              </button>
+              />
+            </label>
+            <p className="text-[11px] text-[var(--muted)]">
+              <strong>1. satır:</strong> proje adı, sonra kategori başlıkları (Class → 3D Model → ISO → …).{" "}
+              <strong>Alt satırlar:</strong> 1. kolon resim adı (
+              <strong>252.100.104-Fire Integrity…</strong>), diğer kolonlar{" "}
+              <strong>Donatım:25</strong>. Her dolu hücre →{" "}
+              <strong>252.100.104.Class-Fire Integrity…</strong> aktivitesi; aynı resimde kategori sırası FS
+              bağıdır.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={plan.jobs.length === 0}
@@ -1442,8 +1501,52 @@ export function GanttPlanner() {
             {pasteStatus && (
               <p className={`text-xs ${pasteError ? "text-rose-700" : "text-emerald-700"}`}>{pasteStatus}</p>
             )}
+            <details className="text-[11px] text-[var(--muted)]">
+              <summary className="cursor-pointer select-none">Pano ile yapıştır (isteğe bağlı)</summary>
+              <div className="mt-2 space-y-2">
+                <textarea
+                  rows={3}
+                  value={pasteText}
+                  placeholder={
+                    "252.Simonsen\tClass\t3D Model\tISO\tArrang'nt\tWorks'p\tManual\n252.100.104-Fire Integrity…\tDonatım:25\t\tDonatım:8\t\t\t"
+                  }
+                  onChange={(e) => setPasteText(e.target.value)}
+                  onPaste={(e) => {
+                    const text = clipboardToText(
+                      e.clipboardData.getData("text/plain"),
+                      e.clipboardData.getData("text/html")
+                    );
+                    if (!text) return;
+                    e.preventDefault();
+                    setPasteText(text);
+                    importPaste(text);
+                  }}
+                  className="w-full rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] p-2 text-sm text-[var(--foreground)]"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => importPaste(pasteText)}
+                    className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)]"
+                  >
+                    Yapıştırmayı aktar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasteText("");
+                      setPasteStatus("");
+                    }}
+                    className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-sm"
+                  >
+                    Alanı temizle
+                  </button>
+                </div>
+              </div>
+            </details>
             <p className="text-[11px] text-[var(--muted)]">
-              Yapıştırma sırası = öncelik sırası. Yeni satırlar en alta eklenir; sırayı sadece gerektiğinde değiştirin.
+              Aktarım sırası: satırlar yukarıdan aşağı, her satırda kategori sütun sırası. İnce ayar
+              Öncelik / Gantt’tan yapılır.
             </p>
           </div>
 

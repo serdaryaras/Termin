@@ -73,6 +73,19 @@ export type ParsedRow = {
   people: number;
 };
 
+/** Excel aktarım sonucu — matris formatında kategori zinciri bağımlılıkları da gelir */
+export type ParsedJobImport = {
+  rows: ParsedRow[];
+  /** FS: aynı resim içinde kategori hiyerarşisi (ör. Class → 3D Model → ISO) */
+  dependencies: Array<{
+    predecessor: { project: string; name: string };
+    successor: { project: string; name: string };
+  }>;
+  skipped: number;
+  /** matrix = proje|iş|Class|3D Model|… hücreleri Role:saat */
+  format: "matrix" | "flat";
+};
+
 export type ParsedCapacityRow = {
   project: string;
   year: number;
@@ -122,9 +135,12 @@ export function normalizeRole(raw: string | undefined | null): string {
 
 export const BAR_COLORS = ["#0d4f8b", "#6d28d9", "#0f766e", "#b45309", "#be123c"];
 
-/** İsimdeki son `[KATEGORİ]` etiketi — yoksa boş */
+/** İsimdeki kategori — önce `252.100.104.Class-…`, yoksa son `[KATEGORİ]` */
 export function activityCategory(name: string): string {
-  const matches = [...String(name || "").matchAll(/\[([^\]]+)\]/g)];
+  const s = String(name || "").trim();
+  const dotted = s.match(/^\d+(?:\.\d+)+\.([^.]+?)-/);
+  if (dotted?.[1]) return dotted[1].trim();
+  const matches = [...s.matchAll(/\[([^\]]+)\]/g)];
   if (!matches.length) return "";
   return (matches[matches.length - 1]![1] || "").trim();
 }
