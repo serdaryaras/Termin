@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import { clipboardToText, parseCapacityText, parseExcelText } from "@/lib/excel";
+import { clipboardToText, looksLikeActivityCode, parseCapacityText, parseExcelText } from "@/lib/excel";
 import { exportElementToPdf } from "@/lib/export-pdf";
 import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
@@ -316,7 +316,7 @@ export function GanttPlanner() {
 
     rows.forEach((row) => {
       let project = (row.project || "").trim();
-      if (!project || project === DEFAULT_PROJECT) {
+      if (!project || project === DEFAULT_PROJECT || looksLikeActivityCode(project)) {
         project = fallbackProject;
         filledProject += 1;
       }
@@ -915,7 +915,9 @@ export function GanttPlanner() {
             <textarea
               rows={4}
               value={pasteText}
-              placeholder={"proje\tiş kalemi\tpersonel tipi\tsaat\n252.Simonsen\tBorulama\tDonatım\t40"}
+              placeholder={
+                "iş kalemi\tpersonel tipi\tsaat\n252.100.101-General Arrangement\tDonatım\t25\n\nveya:\nproje\tiş kalemi\tpersonel tipi\tsaat\n252.Simonsen\tBorulama\tDonatım\t40"
+              }
               onChange={(e) => setPasteText(e.target.value)}
               onPaste={(e) => {
                 const text = clipboardToText(

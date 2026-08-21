@@ -1,4 +1,6 @@
-import { DEFAULT_PROJECT, normalizeRole, type ParsedCapacityRow, type ParsedRow } from "./types";
+import { DEFAULT_PROJECT, normalizeRole, ROLE_OPTIONS, type ParsedCapacityRow, type ParsedRow } from "./types";
+
+const ROLE_OPTIONS_SET = new Set<string>(ROLE_OPTIONS);
 
 function tableHtmlToTsv(html: string): string {
   if (!html || !/<table/i.test(html)) return "";
@@ -53,6 +55,34 @@ function parsePeople(raw: string | undefined): number {
   return n > 0 ? n : 1;
 }
 
+export function looksLikeActivityCode(raw: string): boolean {
+  return /^\d+\.\d+\.\d+/.test(String(raw || "").trim());
+}
+
+/** 252.Simonsen gibi kısa proje adı (çok parçalı WBS değil) */
+function looksLikeProjectName(raw: string): boolean {
+  const t = String(raw || "").trim();
+  if (!t || looksLikeActivityCode(t)) return false;
+  if (/simonsen|proje|project/i.test(t)) return true;
+  // 252.Simonsen / P252 — sayı + harf, üçüncü sayısal segment yok
+  if (/^\d+[./]\s*[A-Za-zÀ-ÿğüşıöçĞÜŞİÖÇ]/.test(t)) return true;
+  return false;
+}
+
+function looksLikeRoleCell(raw: string): boolean {
+  const t = String(raw || "").trim();
+  if (!t) return false;
+  if (headerKind(t) === "role") return true;
+  const n = normalizeRole(t);
+  if (n !== "Belirtilmedi" && ROLE_OPTIONS_SET.has(n)) return true;
+  const key = t
+    .toLocaleLowerCase("tr")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i");
+  return /^(donat|konstruk|kaynak|montaj|boru|elektrik|ressam|vinc|tekniker|muhendis|yardimci)/.test(key);
+}
+
 function splitClipboardLine(line: string): string[] {
   if (line.includes("\t")) return line.split("\t").map((c) => c.trim());
   if (line.includes(";")) return line.split(";").map((c) => c.trim());
@@ -83,17 +113,31 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
     });
     start = 1;
   } else if (first.length >= 4) {
-    map = { project: 0, name: 1, role: 2, hours: 3, people: -1 };
-  } else if (first.length === 3) {
-    // Proje | kalem | saat  veya  kalem | personel | saat
     const c0 = first[0] || "";
     const c1 = first[1] || "";
-    if (/^\d+[./]/.test(c0) || /simonsen|proje|project/i.test(c0)) {
-      map = { project: 0, name: 1, role: -1, hours: 2, people: -1 };
-    } else if (headerKind(c1) === "role" || /donat|konstruk|kaynak|montaj/i.test(c1)) {
-      map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
+    const c2 = first[2] || "";
+    // Aktivite | personel tipi | saat | kişi
+    if (looksLikeActivityCode(c0) && (looksLikeRoleCell(c1) || !looksLikeProjectName(c0))) {
+      map = { name: 0, project: -1, role: 1, hours: 2, people: 3 };
+    } else if (looksLikeProjectName(c0) || (!looksLikeActivityCode(c0) && looksLikeRoleCell(c2))) {
+      // Proje | iş kalemi | personel tipi | saat
+      map = { project: 0, name: 1, role: 2, hours: 3, people: first.length >= 5 ? 4 : -1 };
+    } else if (looksLikeRoleCell(c1) && Number.isFinite(parseHours(c2))) {
+      map = { name: 0, project: -1, role: 1, hours: 2, people: 3 };
     } else {
+      map = { project: 0, name: 1, role: 2, hours: 3, people: -1 };
+    }
+  } else if (first.length === 3) {
+    const c0 = first[0] || "";
+    const c1 = first[1] || "";
+    // Aktivite | personel tipi | saat  (252.100.101-... | Donatım | 25)
+    if (looksLikeActivityCode(c0) || looksLikeRoleCell(c1)) {
+      map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
+    } else if (looksLikeProjectName(c0)) {
+      // Proje | kalem | saat
       map = { project: 0, name: 1, role: -1, hours: 2, people: -1 };
+    } else {
+      map = { name: 0, project: -1, role: 1, hours: 2, people: -1 };
     }
   } else if (first.length === 2) {
     map = { name: 0, project: -1, role: -1, hours: 1, people: -1 };
@@ -105,9 +149,20 @@ export function parseExcelText(text: string): { rows: ParsedRow[]; skipped: numb
   let skipped = 0;
   for (let i = start; i < lines.length; i++) {
     const cols = splitClipboardLine(lines[i]);
-    const name = (map.name >= 0 ? cols[map.name] : cols[0] || "").trim();
-    const project = (map.project >= 0 ? cols[map.project] : "").trim();
-    const role = (map.role >= 0 ? cols[map.role] : "").trim();
+    let name = (map.name >= 0 ? cols[map.name] : cols[0] || "").trim();
+    let project = (map.project >= 0 ? cols[map.project] : "").trim();
+    let role = (map.role >= 0 ? cols[map.role] : "").trim();
+    // Yanlış eşlemede WBS proje kolonuna düşmüşse düzelt
+    if (looksLikeActivityCode(project) && !looksLikeActivityCode(name)) {
+      const swap = name;
+      name = project;
+      project = swap;
+    }
+    if (looksLikeActivityCode(project) && looksLikeRoleCell(name)) {
+      role = role || name;
+      name = project;
+      project = "";
+    }
     let hours = map.hours >= 0 ? parseHours(cols[map.hours]) : NaN;
     if (!Number.isFinite(hours)) {
       const used = new Set([map.name, map.project, map.role, map.people].filter((x) => x >= 0));
