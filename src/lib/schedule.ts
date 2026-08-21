@@ -279,61 +279,100 @@ export function moveSelectedStageBy(plan: Plan, jobId: string, delta: number): P
   return next;
 }
 
-/** Seçili işlerin aşamalarını (tekrarsız) sıra indeksine göre döndür */
-function selectedStageReps(plan: Plan, jobIds: string[]): { jobId: string; stageIndex: number }[] {
-  const byStage = new Map<number, string>();
-  for (const id of jobIds) {
-    const place = findPlacement(plan, id);
-    if (!place) continue;
-    if (!byStage.has(place.stageIndex)) byStage.set(place.stageIndex, id);
-  }
-  return [...byStage.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([stageIndex, jobId]) => ({ jobId, stageIndex }));
+function copyStage(s: Stage): Stage {
+  const gap = Number(s.gapAfterDays);
+  return {
+    jobIds: [...s.jobIds],
+    ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
+  };
 }
 
-/** Birden fazla seçili aşamayı aynı delta ile kaydır (göreli sıra korunur) */
-export function moveJobsByDelta(plan: Plan, jobIds: string[], delta: number): Plan {
-  if (!delta || !jobIds.length) return plan;
-  const reps = selectedStageReps(plan, jobIds);
-  if (!reps.length) return plan;
-  let next = plan;
-  const ordered = delta > 0 ? [...reps].reverse() : reps;
-  for (const { jobId } of ordered) {
-    next = moveSelectedStageBy(next, jobId, delta);
+/**
+ * Seçili işlerin aşamalarını seçim sırasına göre ardışık blok yapar.
+ * Blok, ilk seçilenin kalan liste içindeki konumuna `delta` uygulanarak
+ * (veya üste/alta) yerleştirilir.
+ */
+function relocateSelectedAsBlock(
+  plan: Plan,
+  jobIds: string[],
+  dest: { kind: "delta"; delta: number } | { kind: "edge"; edge: "top" | "bottom" }
+): Plan {
+  const ordered: string[] = [];
+  const seenJob = new Set<string>();
+  for (const id of jobIds) {
+    if (seenJob.has(id) || !findPlacement(plan, id)) continue;
+    seenJob.add(id);
+    ordered.push(id);
   }
+  if (!ordered.length) return plan;
+  if (dest.kind === "delta" && !dest.delta && ordered.length === 1) return plan;
+
+  const stageIndexOfPlan = (p: Plan, jobId: string): number => {
+    for (let s = 0; s < p.stages.length; s++) {
+      if (p.stages[s]!.jobIds.includes(jobId)) return s;
+    }
+    return -1;
+  };
+
+  const seenStage = new Set<number>();
+  const stageIndicesInSelOrder: number[] = [];
+  for (const id of ordered) {
+    const si = stageIndexOfPlan(plan, id);
+    if (si < 0 || seenStage.has(si)) continue;
+    seenStage.add(si);
+    stageIndicesInSelOrder.push(si);
+  }
+  if (!stageIndicesInSelOrder.length) return plan;
+
+  const firstStageOrig = stageIndexOfPlan(plan, ordered[0]!);
+  if (firstStageOrig < 0) return plan;
+
+  const selectedBeforeFirst = stageIndicesInSelOrder.filter((i) => i < firstStageOrig).length;
+  const baseAmongRemaining = firstStageOrig - selectedBeforeFirst;
+  const remainingCount = plan.stages.length - stageIndicesInSelOrder.length;
+
+  let insertAt: number;
+  if (dest.kind === "edge") {
+    insertAt = dest.edge === "top" ? 0 : remainingCount;
+  } else {
+    insertAt = Math.max(0, Math.min(remainingCount, baseAmongRemaining + dest.delta));
+  }
+
+  const sortedIdx = [...stageIndicesInSelOrder].sort((a, b) => a - b);
+  const contiguousInSelOrder =
+    stageIndicesInSelOrder.length === 1 ||
+    stageIndicesInSelOrder.every((si, k) => si === sortedIdx[0]! + k);
+
+  if (contiguousInSelOrder && insertAt === baseAmongRemaining) return plan;
+
+  const next = clonePlan(plan);
+  const extracted = stageIndicesInSelOrder.map((i) => copyStage(next.stages[i]!));
+  for (const i of [...stageIndicesInSelOrder].sort((a, b) => b - a)) {
+    next.stages.splice(i, 1);
+  }
+  next.stages.splice(insertAt, 0, ...extracted);
   return next;
 }
 
-/** Birden fazla seçili aşamayı üste / alta / bir adım kaydır */
+/** Birden fazla seçili aşamayı aynı delta ile kaydır; dağınıksa seçim sırasına göre birleştirir */
+export function moveJobsByDelta(plan: Plan, jobIds: string[], delta: number): Plan {
+  if (!delta || !jobIds.length) return plan;
+  return relocateSelectedAsBlock(plan, jobIds, { kind: "delta", delta });
+}
+
+/** Birden fazla seçili aşamayı üste / alta / bir adım kaydır (seçim sırası blok) */
 export function moveJobsDir(
   plan: Plan,
   jobIds: string[],
   dir: "top" | "bottom" | "up" | "down"
 ): Plan {
   if (!jobIds.length) return plan;
-  if (dir === "up") return moveJobsByDelta(plan, jobIds, -1);
-  if (dir === "down") return moveJobsByDelta(plan, jobIds, 1);
-
-  const reps = selectedStageReps(plan, jobIds);
-  if (!reps.length) return plan;
-  const next = clonePlan(plan);
-  const indices = reps.map((r) => r.stageIndex).sort((a, b) => a - b);
-  const block = indices.map((i) => {
-    const s = next.stages[i]!;
-    const gap = Number(s.gapAfterDays);
-    return {
-      jobIds: [...s.jobIds],
-      ...(Number.isFinite(gap) && gap > 0 ? { gapAfterDays: Math.round(gap) } : {}),
-    };
+  if (dir === "up") return relocateSelectedAsBlock(plan, jobIds, { kind: "delta", delta: -1 });
+  if (dir === "down") return relocateSelectedAsBlock(plan, jobIds, { kind: "delta", delta: 1 });
+  return relocateSelectedAsBlock(plan, jobIds, {
+    kind: "edge",
+    edge: dir === "top" ? "top" : "bottom",
   });
-  const remaining = next.stages.filter((_, i) => !indices.includes(i));
-  if (dir === "top") {
-    next.stages = [...block, ...remaining];
-  } else {
-    next.stages = [...remaining, ...block];
-  }
-  return next;
 }
 
 /** Seçili aşamadan sonra N iş günü boşluk (sonraki tüm aktiviteleri öteleyebilir) */

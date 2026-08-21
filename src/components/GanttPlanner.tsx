@@ -189,13 +189,18 @@ export function GanttPlanner() {
       ) {
         return;
       }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelected(null);
+        setSelectChain([]);
+        setEditingJobId(null);
+        return;
+      }
       const ids =
         selectChain.length > 0 ? selectChain : selected ? [selected] : [];
       if (!ids.length) return;
 
-      const go = (dir: "top" | "bottom" | "up" | "down") => {
-        e.preventDefault();
-        setPlan((p) => moveJobsDir(p, ids, dir));
+      const scrollSel = () => {
         requestAnimationFrame(() => {
           document.getElementById(`priority-job-${ids[ids.length - 1]}`)?.scrollIntoView({
             behavior: "smooth",
@@ -203,15 +208,25 @@ export function GanttPlanner() {
           });
         });
       };
+      const go = (dir: "top" | "bottom" | "up" | "down") => {
+        e.preventDefault();
+        setPlan((p) => moveJobsDir(p, ids, dir));
+        scrollSel();
+      };
+      const goBy = (delta: number) => {
+        e.preventDefault();
+        setPlan((p) => moveJobsByDelta(p, ids, delta));
+        scrollSel();
+      };
 
       if (e.key === "ArrowUp") {
         go(e.shiftKey ? "top" : "up");
       } else if (e.key === "ArrowDown") {
         go(e.shiftKey ? "bottom" : "down");
-      } else if (e.key === "Home") {
-        go("top");
-      } else if (e.key === "End") {
-        go("bottom");
+      } else if (e.key === "PageUp") {
+        goBy(-20);
+      } else if (e.key === "PageDown") {
+        goBy(20);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -232,19 +247,10 @@ export function GanttPlanner() {
     if (selectChain.length) return selectChain;
     return selected ? [selected] : [];
   }, [selectChain, selected]);
-  const selectedStageIndices = useMemo(() => {
-    const idxs: number[] = [];
-    for (const id of linkTargetIds) {
-      const p = findPlacement(plan, id);
-      if (p) idxs.push(p.stageIndex);
-    }
-    return idxs;
-  }, [linkTargetIds, plan]);
   const canShiftUp =
-    selectedStageIndices.length > 0 && Math.min(...selectedStageIndices) > 0;
+    linkTargetIds.length > 0 && moveJobsByDelta(plan, linkTargetIds, -1) !== plan;
   const canShiftDown =
-    selectedStageIndices.length > 0 &&
-    Math.max(...selectedStageIndices) < plan.stages.length - 1;
+    linkTargetIds.length > 0 && moveJobsByDelta(plan, linkTargetIds, 1) !== plan;
   const canClearSelectedLinks = useMemo(() => {
     return linkTargetIds.some(
       (id) => predecessorsOf(plan, id).length > 0 || successorsOf(plan, id).length > 0
@@ -1515,7 +1521,7 @@ export function GanttPlanner() {
                 onChange={(e) => setPrioritySearch(e.target.value)}
                 placeholder="Aktivite ara…"
                 className="h-9 w-[min(100%,400px)] shrink-0 rounded border border-[var(--card-border)] bg-[var(--background)] px-2 text-[11px] text-[var(--foreground)] placeholder:text-[var(--muted)]"
-                title="İsim, rol, proje veya A numarasına göre filtrele; tıkla=çoklu seçim · CTRL=öncül→ardıl · ↑/↓=bir sıra · Shift+↑/↓=üste/alta"
+                title="İsim, rol, proje veya A numarasına göre filtrele; tıkla=çoklu seçim · CTRL=öncül→ardıl · ↑/↓=bir sıra · Shift+↑/↓=üste/alta · PgUp/PgDn=±20"
               />
               <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto">
                 {(
@@ -1558,9 +1564,13 @@ export function GanttPlanner() {
                       type="button"
                       disabled={disabled}
                       title={
-                        delta > 0
-                          ? `Seçili iş(ler)i ${delta} sıra aşağı`
-                          : `Seçili iş(ler)i ${Math.abs(delta)} sıra yukarı`
+                        delta === -20
+                          ? "Page Up · 20 sıra yukarı"
+                          : delta === 20
+                            ? "Page Down · 20 sıra aşağı"
+                            : delta > 0
+                              ? `Seçili iş(ler)i ${delta} sıra aşağı`
+                              : `Seçili iş(ler)i ${Math.abs(delta)} sıra yukarı`
                       }
                       onClick={() => shiftSelectedBy(delta)}
                       className={`h-8 w-[4.5rem] shrink-0 rounded text-xs font-semibold tabular-nums disabled:opacity-40 ${
@@ -1714,19 +1724,22 @@ export function GanttPlanner() {
                             onDrop={dropJob(si, true)}
                             style={{
                               background: isSelected
-                                ? "color-mix(in srgb, var(--accent) 14%, white)"
+                                ? "color-mix(in srgb, var(--accent) 28%, white)"
                                 : tone.bg || "#fff",
+                              boxShadow: isSelected
+                                ? "inset 3px 0 0 0 var(--accent)"
+                                : undefined,
                             }}
                             className={`flex min-w-0 items-stretch border-b border-[var(--card-border)] ${
                               isEditing
                                 ? "cursor-default ring-1 ring-inset ring-[var(--accent)]/40"
                                 : isSelected
-                                  ? "cursor-grab select-none ring-1 ring-inset ring-[var(--accent)]"
+                                  ? "cursor-grab select-none ring-2 ring-inset ring-[var(--accent)]"
                                   : preds.length || succs.length
                                     ? "cursor-grab select-none"
                                     : "cursor-grab select-none hover:brightness-[0.99]"
                             } ${overId === `st-${si}` ? "drop-over" : ""}`}
-                            title={`${job.name} · tıkla: seç · CTRL: öncül→ardıl · ↑/↓: kaydır · Shift+↑/↓: üste/alta · Shift+tık: düzenle`}
+                            title={`${job.name} · tıkla: seç · CTRL: öncül→ardıl · ↑/↓: kaydır · Shift+↑/↓: üste/alta · PgUp/PgDn: ±20 · Shift+tık: düzenle`}
                           >
                             {isEditing ? (
                               <div
@@ -1802,12 +1815,14 @@ export function GanttPlanner() {
                             ) : (
                               <>
                                 <div className="flex min-w-0 flex-1 items-center gap-1 truncate whitespace-nowrap px-2 py-0.5 text-[11px]">
-                                  {inChain && selectChain.length > 1 ? (
-                                    <span className="mr-0.5 inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[8px] font-bold text-white">
-                                      {chainIdx + 1}
+                                  {isSelected ? (
+                                    <span className="mr-0.5 inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-bold leading-none text-white shadow-sm">
+                                      {inChain ? chainIdx + 1 : 1}
                                     </span>
                                   ) : null}
-                                  <span className="min-w-0 truncate">
+                                  <span
+                                    className={`min-w-0 truncate ${isSelected ? "font-semibold text-[var(--foreground)]" : ""}`}
+                                  >
                                     <span className="mr-1.5 tabular-nums text-[var(--muted)]">
                                       A{si + 1}
                                     </span>
