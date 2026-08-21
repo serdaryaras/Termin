@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
 import { clipboardToText, looksLikeActivityCode, parseCapacityFile, parseCapacityText, parseExcelText, parseJobListFile } from "@/lib/excel";
+import { loadOfficialHolidays } from "@/lib/holidays";
 import { exportElementToPdf } from "@/lib/export-pdf";
 import { ARTI_LOGO, artiLogoDisplayWidth } from "@/lib/arti-logo";
 import {
@@ -45,6 +46,7 @@ import {
   upsertWeeklyCapacity,
   weekIndexFromPlanStart,
   weekRangeLabel,
+  workDayToWeekPosition,
   WORK_DAYS_PER_WEEK,
 } from "@/lib/schedule";
 import { isSupabaseConfigured, loadPlan, saveLocalPlan, savePlan } from "@/lib/supabase";
@@ -71,6 +73,68 @@ function nextProgressPercent(current: ProgressPercent | undefined): ProgressPerc
   if (current == null) return 100;
   const i = PROGRESS_CYCLE.indexOf(current);
   return PROGRESS_CYCLE[(i < 0 ? 0 : i + 1) % PROGRESS_CYCLE.length];
+}
+
+function ExcelFileDropZone({
+  hint,
+  onFile,
+}: {
+  hint: string;
+  onFile: (file: File) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  return (
+    <div
+      className={`relative flex flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed px-4 py-6 text-center transition-colors ${
+        dragOver
+          ? "border-[var(--accent)] bg-[var(--accent)]/10"
+          : "border-[var(--card-border)] bg-[var(--background)] hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
+      }`}
+    >
+      {/* Tüm alanı kaplayan input — tıkla / sürükle her tarayıcıda çalışır */}
+      <input
+        type="file"
+        accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain"
+        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+        title="Excel dosyası seç"
+        onDragEnter={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) onFile(file);
+        }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          e.target.value = "";
+        }}
+      />
+      <span className="pointer-events-none rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white">
+        Dosya seç
+      </span>
+      <span className="pointer-events-none text-sm font-medium text-[var(--foreground)]">
+        veya buraya sürükle
+      </span>
+      <span className="pointer-events-none max-w-md text-[11px] text-[var(--muted)]">{hint}</span>
+    </div>
+  );
 }
 
 function parseTrackWeekLabel(raw: string): { year: number; week: number } | null {
@@ -133,6 +197,8 @@ export function GanttPlanner() {
   const dragRef = useRef<{ jobIds: string[] } | null>(null);
   const ganttExportRef = useRef<HTMLDivElement | null>(null);
   const supabaseOn = isSupabaseConfigured();
+  const [holidays, setHolidays] = useState<ReadonlySet<string>>(() => new Set());
+  const [holidayStatus, setHolidayStatus] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +213,25 @@ export function GanttPlanner() {
         setSaveStatus("Supabase bağlı");
       } else {
         setSaveStatus("Bu cihazda kaydedilir (Supabase henüz yok)");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await loadOfficialHolidays();
+      if (cancelled) return;
+      setHolidays(res.dates);
+      if (res.error && res.count === 0) {
+        setHolidayStatus(`Resmi tatil yok · ${res.error}`);
+      } else if (res.count > 0) {
+        setHolidayStatus(`${res.count} resmi tatil günü yüklendi`);
+      } else {
+        setHolidayStatus("Resmi tatil listesi boş");
       }
     })();
     return () => {
@@ -244,7 +329,7 @@ export function GanttPlanner() {
     return () => window.removeEventListener("keydown", onKey);
   }, [activeTab, selectChain, selected, ganttSelectIds]);
 
-  const gantt = useMemo(() => computeGantt(plan), [plan]);
+  const gantt = useMemo(() => computeGantt(plan, holidays), [plan, holidays]);
   const categoryToneMap = useMemo(
     () => buildCategoryToneMap(plan.jobs.map((j) => activityCategory(j.name))),
     [plan.jobs]
@@ -304,7 +389,7 @@ export function GanttPlanner() {
         jobIds = jobIds.filter((id) => {
           const job = jobById(plan, id);
           if (!job) return false;
-          const week = stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows) || "";
+          const week = stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows, holidays) || "";
           const hay = [
             job.name,
             job.role,
@@ -321,7 +406,7 @@ export function GanttPlanner() {
       if (jobIds.length) out.push({ si, jobIds });
     });
     return out;
-  }, [plan, prioritySearch, projectFilter, gantt.rows]);
+  }, [plan, prioritySearch, projectFilter, gantt.rows, holidays]);
 
   const sortedCapacities = useMemo(() => {
     const list = [...plan.weeklyCapacities].sort((a, b) => {
@@ -411,7 +496,8 @@ export function GanttPlanner() {
             r,
             plan.startDate,
             trackWeekParts.year,
-            trackWeekParts.week
+            trackWeekParts.week,
+            holidays
           )
         )
         .map((r) => r.job.id)
@@ -428,7 +514,7 @@ export function GanttPlanner() {
       }
     });
     return rows;
-  }, [plan, projectFilter, gantt.rows, trackWeekParts]);
+  }, [plan, projectFilter, gantt.rows, trackWeekParts, holidays]);
 
   const shiftTrackWeek = useCallback((delta: -1 | 1) => {
     const base =
@@ -555,16 +641,18 @@ export function GanttPlanner() {
   }, [plan, supabaseOn]);
 
   const applyJobImport = (
-    parsed: ReturnType<typeof parseExcelText>,
+    parsed: ReturnType<typeof parseExcelText> & { preview?: string },
     sourceLabel?: string
   ) => {
-    const { rows, skipped, dependencies: depSpecs, format } = parsed;
+    const { rows, skipped, dependencies: depSpecs, format, preview } = parsed;
     if (!rows.length) {
       setPasteError(true);
       setPasteStatus(
-        skipped
-          ? `${skipped} satır okunamadı. Beklenen: 1. satır ProjeAdı|Class|3D Model|ISO|… · alt satırlar resim|Donatım:25|…`
-          : "İçe aktarılacak satır bulunamadı."
+        (skipped
+          ? `${skipped} satır okunamadı. `
+          : "İçe aktarılacak aktivite yok. ") +
+          "Beklenen: 1. satır ProjeAdı|Class|3D Model|… · alt: resim|Donatım:25|…" +
+          (preview ? ` · Okunan: ${preview}` : "")
       );
       return;
     }
@@ -679,16 +767,21 @@ export function GanttPlanner() {
   };
 
   const applyCapacityImport = (
-    parsed: { rows: import("@/lib/types").ParsedCapacityRow[]; skipped: number; duplicates: number },
+    parsed: {
+      rows: import("@/lib/types").ParsedCapacityRow[];
+      skipped: number;
+      duplicates: number;
+      preview?: string;
+    },
     sourceLabel?: string
   ) => {
-    const { rows, skipped, duplicates } = parsed;
+    const { rows, skipped, duplicates, preview } = parsed;
     if (!rows.length) {
       setCapError(true);
       setCapStatus(
-        skipped
-          ? `${skipped} satır okunamadı. Beklenen: 1. satır ProjeAdı|Donatım|Hull|… · alt satırlar 2026-35|5|2|…`
-          : "Kapasite satırı bulunamadı."
+        (skipped ? `${skipped} satır okunamadı. ` : "Kapasite satırı bulunamadı. ") +
+          "Beklenen: 1. satır ProjeAdı|Donatım|Hull|… · alt: 2026-35|5|2|…" +
+          (preview ? ` · Okunan: ${preview}` : "")
       );
       return;
     }
@@ -966,6 +1059,9 @@ export function GanttPlanner() {
               : "Supabase yok · kayıt yalnızca bu tarayıcıda tutulur."}
           </p>
           <p className="text-sm text-[var(--foreground)]">{saveStatus}</p>
+          {holidayStatus ? (
+            <p className="text-xs text-[var(--muted)]">{holidayStatus}</p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -1043,34 +1139,19 @@ export function GanttPlanner() {
                 .xlsx · .xls · .csv · ilk sayfa
               </span>
             </div>
-            <label
-              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] px-4 py-6 text-center hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void importCapacityFromFile(e.dataTransfer.files?.[0] || null);
-              }}
-            >
-              <span className="text-sm font-medium text-[var(--foreground)]">
-                Dosya seç veya buraya sürükle
-              </span>
-              <span className="text-[11px] text-[var(--muted)]">
-                1. satır: Proje adı · Donatım · Hull · … · alt: 2026-35 · 5 · 2
-              </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-                className="sr-only"
-                onChange={(e) => {
-                  void importCapacityFromFile(e.target.files?.[0] || null);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+            <ExcelFileDropZone
+              hint="1. satır: Proje adı · Donatım · Hull · … · alt: 2026-35 · 5 · 2"
+              onFile={(file) => void importCapacityFromFile(file)}
+            />
+            {capStatus && (
+              <p
+                className={`rounded-md px-2 py-1.5 text-sm ${
+                  capError ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                {capStatus}
+              </p>
+            )}
             <p className="text-[11px] text-[var(--muted)]">
               <strong>1. satır:</strong> proje adı, sonra personel tipleri. <strong>Alt satırlar:</strong>{" "}
               hafta (<strong>2026-35</strong>) ve her tip için kişi sayısı.
@@ -1097,9 +1178,6 @@ export function GanttPlanner() {
                 Tüm kapasiteyi sil
               </button>
             </div>
-            {capStatus && (
-              <p className={`text-xs ${capError ? "text-rose-700" : "text-emerald-700"}`}>{capStatus}</p>
-            )}
             <details className="text-[11px] text-[var(--muted)]">
               <summary className="cursor-pointer select-none">Pano ile yapıştır (isteğe bağlı)</summary>
               <div className="mt-2 space-y-2">
@@ -1503,36 +1581,19 @@ export function GanttPlanner() {
                 .xlsx · .xls · .csv · ilk sayfa
               </span>
             </div>
-            <label
-              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--card-border)] bg-[var(--background)] px-4 py-6 text-center hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const file = e.dataTransfer.files?.[0] || null;
-                void importJobFile(file);
-              }}
-            >
-              <span className="text-sm font-medium text-[var(--foreground)]">
-                Dosya seç veya buraya sürükle
-              </span>
-              <span className="text-[11px] text-[var(--muted)]">
-                1. satır: Proje adı · Class · 3D Model · ISO · … · alt satırlar: resim adı · Donatım:25
-              </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  void importJobFile(file);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+            <ExcelFileDropZone
+              hint="1. satır: Proje adı · Class · 3D Model · ISO · … · alt: resim adı · Donatım:25"
+              onFile={(file) => void importJobFile(file)}
+            />
+            {pasteStatus && (
+              <p
+                className={`rounded-md px-2 py-1.5 text-sm ${
+                  pasteError ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                {pasteStatus}
+              </p>
+            )}
             <p className="text-[11px] text-[var(--muted)]">
               <strong>1. satır:</strong> proje adı, sonra kategori başlıkları (Class → 3D Model → ISO → …).{" "}
               <strong>Alt satırlar:</strong> 1. kolon resim adı (
@@ -1565,9 +1626,6 @@ export function GanttPlanner() {
                 Tüm işleri sil
               </button>
             </div>
-            {pasteStatus && (
-              <p className={`text-xs ${pasteError ? "text-rose-700" : "text-emerald-700"}`}>{pasteStatus}</p>
-            )}
             <details className="text-[11px] text-[var(--muted)]">
               <summary className="cursor-pointer select-none">Pano ile yapıştır (isteğe bağlı)</summary>
               <div className="mt-2 space-y-2">
@@ -1929,8 +1987,8 @@ export function GanttPlanner() {
                       {(stage.gapAfterDays ?? 0) > 0 && (
                         <div className="border-b border-[var(--card-border)] bg-amber-50 px-2 py-0.5 text-[9px] font-medium text-amber-900">
                           A{si + 1} sonrası +{stage.gapAfterDays} iş günü boşluk
-                          {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows)
-                            ? ` · ${stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows)}`
+                          {stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows, holidays)
+                            ? ` · ${stageGanttWeekRangeLabel(plan.startDate, stage, gantt.rows, holidays)}`
                             : ""}
                         </div>
                       )}
@@ -2317,7 +2375,7 @@ export function GanttPlanner() {
                   <p className="mb-3 text-[11px] text-slate-600">
                     {filteredGantt.rows.length} satır · {formatHours(gantt.totalHours)} ·{" "}
                     {(gantt.totalDays / WORK_DAYS_PER_WEEK).toFixed(1)} hafta ·{" "}
-                    {weekRangeLabel(buildWeekTicks(plan.startDate, gantt.totalDays))}
+                    {weekRangeLabel(buildWeekTicks(plan.startDate, gantt.totalDays, holidays))}
                   </p>
                 </>
               )}
@@ -2325,6 +2383,7 @@ export function GanttPlanner() {
                 plan={plan}
                 capacityProject={projectFilter !== "all" ? projectFilter : null}
                 planStart={plan.startDate}
+                holidays={holidays}
                 model={filteredGantt}
                 groupByProject={groupByProject}
                 compactLabels={pdfCompact}
@@ -2587,6 +2646,7 @@ function GanttView({
   plan,
   capacityProject = null,
   planStart,
+  holidays = new Set(),
   model,
   groupByProject,
   compactLabels = false,
@@ -2599,6 +2659,7 @@ function GanttView({
   /** Proje seçiliyse hafta başlığında toplam kapasite (kişi) gösterilir */
   capacityProject?: string | null;
   planStart: string;
+  holidays?: ReadonlySet<string>;
   model: ReturnType<typeof computeGantt>;
   groupByProject: boolean;
   /** PDF: Saat kolonunu da gizle */
@@ -2610,8 +2671,8 @@ function GanttView({
   onMoveGroupBefore?: (jobIds: string[], targetJobId: string) => void;
 }) {
   const ticks = useMemo(
-    () => buildWeekTicks(planStart, model.totalDays),
-    [planStart, model.totalDays]
+    () => buildWeekTicks(planStart, model.totalDays, holidays),
+    [planStart, model.totalDays, holidays]
   );
   const weekPx = Math.max(28, Math.min(48, Math.floor(900 / Math.max(ticks.length, 1))));
   const nameColPx = 480;
@@ -2718,8 +2779,14 @@ function GanttView({
               </div>
             )}
             {section.rows.map((r) => {
-              const left = weekIndexFromPlanStart(planStart, r.startDay) * weekPx;
-              const width = Math.max(12, (r.durationDays / WORK_DAYS_PER_WEEK) * weekPx);
+              const left = weekIndexFromPlanStart(planStart, r.startDay, holidays) * weekPx;
+              const endPos = workDayToWeekPosition(
+                planStart,
+                r.startDay + Math.max(0, r.durationDays) - 1e-9,
+                holidays
+              );
+              const startPos = weekIndexFromPlanStart(planStart, r.startDay, holidays);
+              const width = Math.max(12, (endPos - startPos) * weekPx);
               const selOrd = selectedIds.indexOf(r.job.id);
               const isSelected = selOrd >= 0;
               const isDropTarget = dropTargetId === r.job.id;

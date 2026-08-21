@@ -567,6 +567,84 @@ export function removeWeeklyCapacity(
 /** İş günü / hafta */
 export const WORK_DAYS_PER_WEEK = 5;
 
+export type HolidaySet = ReadonlySet<string>;
+
+function toIsoDateLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function addCalendarDaysIso(iso: string, days: number): string {
+  const d = parseIsoDate(iso);
+  d.setDate(d.getDate() + days);
+  return toIsoDateLocal(d);
+}
+
+/** Pzt–Cum ve resmi tatil değil → iş günü */
+export function isWorkCalendarDay(iso: string, holidays: HolidaySet = new Set()): boolean {
+  const d = parseIsoDate(iso);
+  const wd = d.getDay();
+  if (wd === 0 || wd === 6) return false;
+  if (holidays.has(iso)) return false;
+  return true;
+}
+
+/**
+ * Plan başlangıç haftasının pazartesinden itibaren n. iş gününün tarihi.
+ * Resmi tatiller atlanır (Pzt–Cum dışı da atlanır).
+ */
+export function workDayToIsoDate(
+  planStartIso: string,
+  workDayIndex: number,
+  holidays: HolidaySet = new Set()
+): string {
+  const { year, week } = getIsoWeekParts(parseIsoDate(planStartIso));
+  let iso = mondayOfIsoWeek(year, week);
+  const target = Math.max(0, Math.floor(workDayIndex));
+  let seen = 0;
+  for (let i = 0; i < 5000; i++) {
+    if (isWorkCalendarDay(iso, holidays)) {
+      if (seen === target) return iso;
+      seen += 1;
+    }
+    iso = addCalendarDaysIso(iso, 1);
+  }
+  return iso;
+}
+
+/** İş günü indeksi → Gantt hafta ofseti (tatil atlanmış takvim) */
+export function workDayToWeekOffset(
+  planStartIso: string,
+  workDayIndex: number,
+  holidays: HolidaySet = new Set()
+): number {
+  const iso = workDayToIsoDate(planStartIso, workDayIndex, holidays);
+  const { year, week } = getIsoWeekParts(parseIsoDate(iso));
+  return isoWeekOffsetFromPlanStart(planStartIso, year, week) ?? 0;
+}
+
+/**
+ * Çubuk konumu: hafta ofseti + hafta içi (Pzt=0 … Cum=4) / 5.
+ * Tatil günleri atlandığı için çubuklar doğru haftaya kayar.
+ */
+export function workDayToWeekPosition(
+  planStartIso: string,
+  workDayIndex: number,
+  holidays: HolidaySet = new Set()
+): number {
+  const whole = Math.floor(Math.max(0, workDayIndex));
+  const frac = Math.max(0, workDayIndex) - whole;
+  const iso = workDayToIsoDate(planStartIso, whole, holidays);
+  const d = parseIsoDate(iso);
+  const { year, week } = getIsoWeekParts(d);
+  const weekOff = isoWeekOffsetFromPlanStart(planStartIso, year, week) ?? 0;
+  const dow = d.getDay();
+  const dayInWeek = dow >= 1 && dow <= 5 ? dow - 1 : 0;
+  return weekOff + (dayInWeek + Math.min(0.999, frac)) / WORK_DAYS_PER_WEEK;
+}
+
 export function formatWeekLabel(year: number, week: number): string {
   return `${year}-${String(week).padStart(2, "0")}`;
 }
@@ -658,27 +736,42 @@ export function ganttRowOverlapsIsoWeek(
   row: { startDay: number; durationDays: number },
   planStartIso: string,
   year: number,
-  week: number
+  week: number,
+  holidays: HolidaySet = new Set()
 ): boolean {
   const offset = isoWeekOffsetFromPlanStart(planStartIso, year, week);
   if (offset == null) return false;
-  const weekStart = offset * WORK_DAYS_PER_WEEK;
-  const weekEnd = weekStart + WORK_DAYS_PER_WEEK;
-  const jobStart = row.startDay;
-  const jobEnd = row.startDay + row.durationDays;
-  return jobStart < weekEnd && jobEnd > weekStart - 1e-9;
+  const startPos = workDayToWeekPosition(planStartIso, row.startDay, holidays);
+  const endPos = workDayToWeekPosition(
+    planStartIso,
+    row.startDay + Math.max(0, row.durationDays) - 1e-9,
+    holidays
+  );
+  return startPos < offset + 1 && endPos > offset - 1e-9;
 }
 
-export function weekIndexFromPlanStart(_planStartIso: string, workDayOffset: number): number {
-  return Math.max(0, workDayOffset) / WORK_DAYS_PER_WEEK;
+export function weekIndexFromPlanStart(
+  planStartIso: string,
+  workDayOffset: number,
+  holidays: HolidaySet = new Set()
+): number {
+  return workDayToWeekPosition(planStartIso, workDayOffset, holidays);
 }
 
 export type WeekTick = { key: string; label: string; year: number; week: number };
 
-export function buildWeekTicks(planStartIso: string, totalWorkDays: number): WeekTick[] {
+export function buildWeekTicks(
+  planStartIso: string,
+  totalWorkDays: number,
+  holidays: HolidaySet = new Set()
+): WeekTick[] {
   const start = parseIsoDate(planStartIso);
   const { year: y0, week: w0 } = getIsoWeekParts(start);
-  const weeksNeeded = Math.max(1, Math.ceil(Math.max(0, totalWorkDays) / WORK_DAYS_PER_WEEK - 1e-9) || 1);
+  const lastPos =
+    totalWorkDays > 0
+      ? workDayToWeekPosition(planStartIso, Math.max(0, totalWorkDays - 1e-9), holidays)
+      : 0;
+  const weeksNeeded = Math.max(1, Math.ceil(lastPos - 1e-9) || 1);
 
   const ticks: WeekTick[] = [];
   let year = y0;
@@ -827,7 +920,7 @@ function weekCapacityAvailable(
 /**
  * İş-günü çözünürlüğünde yerleştir: biten işin hemen ardından kapasite açılır.
  * Haftalık kişi limiti o takvim haftasındaki her iş günü için geçerlidir.
- * Kısmi günler kesirli kişi·gün olarak sayılır (ceil şişirmesi yok).
+ * Resmi tatiller iş günü dizisinden çıkarılır.
  */
 function canPlaceAtDay(
   plan: Plan,
@@ -838,12 +931,13 @@ function canPlaceAtDay(
   role: string,
   startDay: number,
   durationDays: number,
-  people: number
+  people: number,
+  holidays: HolidaySet
 ): boolean {
   const pair = pairKey(project, role);
   const needPeople = Number(people) || 1;
   for (const { day, frac } of dayFractionsInSpan(startDay, durationDays)) {
-    const weekOffset = Math.floor(day / WORK_DAYS_PER_WEEK);
+    const weekOffset = workDayToWeekOffset(plan.startDate, day, holidays);
     const available = weekCapacityAvailable(plan, capMap, capped, project, role, weekOffset);
     const already = used.get(`${pair}::d${day}`) ?? 0;
     const need = needPeople * frac;
@@ -894,9 +988,9 @@ export type GanttModel = {
 /**
  * Öncelik sırası: kim önce kapasiteyi kapar.
  * Öncül-ardıl (FS): ardıl, tüm öncülleri bitmeden başlamaz (kapasite olsa bile).
- * Yerleşim iş günü bazlı — kapasite elverdikçe aynı hafta içinde devam edilebilir.
+ * Yerleşim iş günü bazlı — resmi tatiller atlanır.
  */
-export function computeGantt(plan: Plan): GanttModel {
+export function computeGantt(plan: Plan, holidays: HolidaySet = new Set()): GanttModel {
   const hpd = Number(plan.hoursPerDay) || 8;
   const ordered = priorityJobs(plan);
   const capMap = capacityLookup(plan);
@@ -959,7 +1053,7 @@ export function computeGantt(plan: Plan): GanttModel {
     let placed = false;
     const maxSearch = 520 * WORK_DAYS_PER_WEEK;
     for (let d = earliest; d < earliest + maxSearch; d++) {
-      if (canPlaceAtDay(plan, capMap, capped, used, project, role, d, durationDays, people)) {
+      if (canPlaceAtDay(plan, capMap, capped, used, project, role, d, durationDays, people, holidays)) {
         startDay = d;
         placed = true;
         break;
@@ -1042,13 +1136,14 @@ export function stageDurationLabel(plan: Plan, stage: Stage): string {
 export function formatGanttSpanWeeks(
   planStartIso: string,
   startDay: number,
-  durationDays: number
+  durationDays: number,
+  holidays: HolidaySet = new Set()
 ): string | null {
   if (!Number.isFinite(startDay) || !Number.isFinite(durationDays) || durationDays <= 0) return null;
-  const startOff = Math.max(0, Math.floor(startDay / WORK_DAYS_PER_WEEK));
+  const startOff = Math.max(0, Math.floor(workDayToWeekPosition(planStartIso, startDay, holidays)));
   const endOff = Math.max(
     startOff,
-    Math.floor((startDay + durationDays - 1e-9) / WORK_DAYS_PER_WEEK)
+    Math.floor(workDayToWeekPosition(planStartIso, startDay + durationDays - 1e-9, holidays))
   );
   const a = isoWeekAtOffset(planStartIso, startOff);
   const b = isoWeekAtOffset(planStartIso, endOff);
@@ -1065,7 +1160,8 @@ export function formatGanttSpanWeeks(
 export function stageGanttWeekRangeLabel(
   planStartIso: string,
   stage: Stage,
-  ganttRows: GanttRow[]
+  ganttRows: GanttRow[],
+  holidays: HolidaySet = new Set()
 ): string | null {
   const ids = new Set(stage.jobIds);
   const rows = ganttRows.filter((r) => ids.has(r.job.id));
@@ -1077,7 +1173,7 @@ export function stageGanttWeekRangeLabel(
     maxEnd = Math.max(maxEnd, r.startDay + r.durationDays);
   }
   if (!Number.isFinite(minStart) || !(maxEnd > minStart)) return null;
-  return formatGanttSpanWeeks(planStartIso, minStart, maxEnd - minStart);
+  return formatGanttSpanWeeks(planStartIso, minStart, maxEnd - minStart, holidays);
 }
 
 export function addDaysLabel(iso: string, days: number): string {

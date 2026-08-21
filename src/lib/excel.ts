@@ -1,3 +1,4 @@
+import * as XLSXImport from "xlsx";
 import {
   capacityKey,
   DEFAULT_PROJECT,
@@ -7,6 +8,12 @@ import {
   type ParsedJobImport,
   type ParsedRow,
 } from "./types";
+
+/** Turbopack / CJS uyumu: default veya namespace */
+const XLSX =
+  (XLSXImport as unknown as { default?: typeof XLSXImport }).default?.read != null
+    ? (XLSXImport as unknown as { default: typeof XLSXImport }).default
+    : XLSXImport;
 
 const ROLE_OPTIONS_SET = new Set<string>(ROLE_OPTIONS);
 
@@ -100,23 +107,34 @@ function splitClipboardLine(line: string): string[] {
   return [line.trim()];
 }
 
-/** Hücre: `Donatım:25` → rol + saat */
+/** Hücre: `Donatım:25` / `Donatım 25` → rol + saat */
 export function parseRoleHoursCell(raw: string): { role: string; hours: number } | null {
   const t = String(raw || "").trim();
   if (!t) return null;
-  const m = t.match(/^(.+?)\s*[:：]\s*([\d.,]+)\s*(?:sa|saat|h|hr|hrs)?\s*$/i);
+  const m =
+    t.match(/^(.+?)\s*[:：;|=]\s*([\d.,]+)\s*(?:sa|saat|h|hr|hrs)?\s*$/i) ||
+    t.match(/^(.+?)\s+([\d.,]+)\s*(?:sa|saat|h|hr|hrs)?\s*$/i);
   if (!m) return null;
   const hours = parseHours(m[2]);
   if (!Number.isFinite(hours)) return null;
   const role = normalizeRole(m[1]!.trim());
   if (!role || role === "Belirtilmedi") return null;
+  // İsim kısmı yalnızca sayı olmasın
+  if (/^[\d.,]+$/.test(m[1]!.trim())) return null;
   return { role, hours };
 }
 
 /** `252.100.104-Fire Integrity…` → kod + başlık */
 export function splitDrawingLabel(raw: string): { code: string; title: string } | null {
-  const t = String(raw || "").trim();
-  const m = t.match(/^(\d+(?:\.\d+)+)\s*[-–—]\s*(.+)$/);
+  const t = String(raw || "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  // Tire / en-dash / em-dash / alt çizgi
+  let m = t.match(/^(\d+(?:\.\d+)+)\s*[-–—_]\s*(.+)$/);
+  if (!m) {
+    // Boşlukla ayrılmış: 252.100.104 Fire Integrity
+    m = t.match(/^(\d+(?:\.\d+)+)\s+(.+)$/);
+  }
   if (!m) return null;
   const code = m[1]!.trim();
   const title = m[2]!.trim();
@@ -370,7 +388,7 @@ export function parseExcelText(text: string): ParsedJobImport {
   return parseFlatExcelText(lines);
 }
 
-/** .xlsx / .xls / .csv dosyasını okuyup TSV metne çevirir (ilk sayfa) */
+/** .xlsx / .xls / .csv dosyasını okuyup TSV metne çevirir (ilk dolu sayfa) */
 export async function readSpreadsheetFileToTsv(file: File): Promise<{ text: string; sheetName: string }> {
   const name = (file.name || "").toLowerCase();
   if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")) {
@@ -378,40 +396,75 @@ export async function readSpreadsheetFileToTsv(file: File): Promise<{ text: stri
     return { text: text.replace(/\r\n/g, "\n").trim(), sheetName: file.name };
   }
 
-  const XLSX = await import("xlsx");
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array", cellDates: false, raw: false });
-  const sheetName = wb.SheetNames[0] || "";
-  if (!sheetName) throw new Error("Excel dosyasında sayfa bulunamadı.");
-  const ws = wb.Sheets[sheetName];
-  if (!ws) throw new Error(`Sayfa okunamadı: ${sheetName}`);
+  if (!buf.byteLength) throw new Error("Dosya boş görünüyor.");
 
-  // Ham 2D dizi — boş hücreleri koru (kategori boşlukları önemli)
-  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(ws, {
-    header: 1,
-    defval: "",
-    blankrows: false,
+  const wb = XLSX.read(buf, {
+    type: "array",
+    cellDates: false,
     raw: false,
-  }) as unknown as unknown[][];
+  });
+  if (!wb.SheetNames?.length) throw new Error("Excel dosyasında sayfa bulunamadı.");
 
-  const text = rows
+  const cellStr = (c: unknown): string => {
+    if (c == null || c === "") return "";
+    if (typeof c === "number" && Number.isFinite(c)) return String(c);
+    if (typeof c === "boolean") return c ? "1" : "0";
+    return String(c).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  };
+
+  let sheetName = "";
+  let bestRows: unknown[][] = [];
+
+  for (const sn of wb.SheetNames) {
+    const ws = wb.Sheets[sn];
+    if (!ws) continue;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+      header: 1,
+      defval: "",
+      blankrows: false,
+      raw: false,
+    }) as unknown[][];
+    const nonEmpty = rows.filter(
+      (r) => Array.isArray(r) && r.some((c) => cellStr(c))
+    );
+    if (nonEmpty.length >= 2) {
+      sheetName = sn;
+      bestRows = nonEmpty;
+      break;
+    }
+    if (nonEmpty.length > bestRows.length) {
+      bestRows = nonEmpty;
+      sheetName = sn;
+    }
+  }
+
+  if (!sheetName || !bestRows.length) {
+    throw new Error("Excel’de okunacak veri satırı bulunamadı (boş sayfa?).");
+  }
+
+  const width = Math.max(1, ...bestRows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  const text = bestRows
     .map((row) => {
       const cells = Array.isArray(row) ? row : [];
-      return cells
-        .map((c) => String(c ?? "").replace(/\s+/g, " ").trim())
-        .join("\t");
+      return Array.from({ length: width }, (_, i) => cellStr(cells[i])).join("\t");
     })
-    .filter((line) => line.replace(/\t/g, "").trim())
     .join("\n");
 
+  if (!text.trim()) throw new Error("Excel sayfası boş geldi.");
   return { text, sheetName };
 }
 
 /** Dosyadan iş listesi matrisini parse et */
-export async function parseJobListFile(file: File): Promise<ParsedJobImport & { sheetName: string }> {
+export async function parseJobListFile(file: File): Promise<ParsedJobImport & { sheetName: string; preview: string }> {
   const { text, sheetName } = await readSpreadsheetFileToTsv(file);
   const parsed = parseExcelText(text);
-  return { ...parsed, sheetName };
+  const preview = text
+    .split(/\n/)
+    .slice(0, 3)
+    .map((l) => l.slice(0, 120))
+    .join(" | ");
+  return { ...parsed, sheetName, preview };
 }
 
 type CapKind = "project" | "year" | "week" | "role" | "people";
@@ -648,10 +701,21 @@ export function parseCapacityText(
 export async function parseCapacityFile(
   file: File,
   defaultYear: number
-): Promise<{ rows: ParsedCapacityRow[]; skipped: number; duplicates: number; sheetName: string }> {
+): Promise<{
+  rows: ParsedCapacityRow[];
+  skipped: number;
+  duplicates: number;
+  sheetName: string;
+  preview: string;
+}> {
   const { text, sheetName } = await readSpreadsheetFileToTsv(file);
   const parsed = parseCapacityText(text, defaultYear);
-  return { ...parsed, sheetName };
+  const preview = text
+    .split(/\n/)
+    .slice(0, 3)
+    .map((l) => l.slice(0, 120))
+    .join(" | ");
+  return { ...parsed, sheetName, preview };
 }
 
 export function formatCapacityChip(c: {
