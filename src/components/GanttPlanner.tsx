@@ -82,44 +82,62 @@ function ExcelFileDropZone({
   hint: string;
   onFile: (file: File) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  const openPicker = () => {
+    // iOS Safari: opacity-0 full-area inputs often fail; open from a real user gesture instead.
+    inputRef.current?.click();
+  };
 
   return (
     <div
-      className={`relative flex flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed px-4 py-6 text-center transition-colors ${
+      className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed px-4 py-6 text-center transition-colors ${
         dragOver
           ? "border-[var(--accent)] bg-[var(--accent)]/10"
           : "border-[var(--card-border)] bg-[var(--background)] hover:border-[var(--accent)] hover:bg-[var(--accent)]/5"
       }`}
+      onClick={openPicker}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openPicker();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) onFile(file);
+      }}
     >
-      {/* Tüm alanı kaplayan input — tıkla / sürükle her tarayıcıda çalışır */}
+      {/* Visually hidden — not display:none / full overlay (both break file pickers on iPad Safari) */}
       <input
+        ref={inputRef}
         type="file"
         accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain"
-        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+        className="sr-only"
+        tabIndex={-1}
         title="Excel dosyası seç"
-        onDragEnter={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(true);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(false);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(false);
-          const file = e.dataTransfer.files?.[0];
-          if (file) onFile(file);
-        }}
+        onClick={(e) => e.stopPropagation()}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) onFile(file);
